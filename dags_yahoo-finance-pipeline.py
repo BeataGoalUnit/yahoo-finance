@@ -246,7 +246,7 @@ with models.DAG(
     )
         
     YahooFinance = PythonOperator(
-        task_id='YAHOOFINANCE_GENERAL',
+        task_id='YAHOO_FINANCE_GENERAL',
         python_callable=integrationYahooFinance,
         dag=dag
     )
