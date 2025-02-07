@@ -8,12 +8,10 @@ from datetime import datetime
 from requests import Session
 import pandas as pd
 from google.cloud import bigquery # <- TODO: Inte använda väl?
+import cloudsqlmigration.postgres
 import sys
 import time
 
-# Project and dataset configuration
-PROJECT_ID = "goalunit-404013"
-DATASET_ID = "yahoo-finance_raw" # <- TODO: Inte använda detta?
 YAHOO_FINANCE_API_KEY = "lägg till nyckel" # <- TODO: Subscribea och använd Goalunit rapidapi key
 YAHOO_FINANCE_HOST = "yahoo-finance-real-time1.p.rapidapi.com"
 BASE_URL = "https://yahoo-finance-real-time1.p.rapidapi.com/"
@@ -52,18 +50,19 @@ with models.DAG(
     tags=["yahoo-finance"],
 ) as dag:
     # If the DataFrame is empty, skips the upload.
-    def uploadToDB(df: pd.DataFrame, table_name: str):
+    def uploadToDB(df: pd.DataFrame, table_name: str, merge_query: str):
             if df.empty:
                 print(f"{datetime.now()}: Response recieved for {table_name} was empty. Skipping upload...")
                 return
-            
-            table_id = f"{PROJECT_ID}.{DATASET_ID}.{table_name}" # <- TODO: Ska detta behållas?
 
             df["timestamp"] = datetime.now()
 
             # TODO: Vad gör vi av df? SQL connection string? (Inte in i BQ)
+            # Call the merge_to_postgres function to insert the data
+            is_prod = False # <- TODO: hur sätts den?
+            cloudsqlmigration.postgres.merge_to_postgres(df, merge_query, is_prod=is_prod)
 
-            print("{} Loaded {} rows and {} columns to {}".format(datetime.now(), table_id))
+            print("{} Loaded {} rows and {} columns to {}".format(datetime.now(), table_name))
             
     # Makes an API request and handles errors with retries if necessary.
     def Request(url: str, session, attempt: int = 0):
@@ -125,6 +124,32 @@ with models.DAG(
         
         print(f"When calling {url}: An unexpected error occured: {response.status_code} {response.reason}. More info: {response.text}")
         return None
+    
+    def generateMergeQuery(df: pd.DataFrame, table_name: str):
+        # Get columns from the dataframe
+        columns = df.columns.tolist()
+        
+        # Determine the conflict column and what to update in case of a conflict
+        if table_name == 'stockChart':
+            conflict_columns = ['symbol', 'timestamp']
+        elif table_name == 'stockQuotes':
+            conflict_columns = ['symbol']
+        else:
+            raise ValueError(f"Unknown table: {table_name}")
+
+        value_placeholders = ", ".join(["%s"] * len(columns))
+        columns_to_insert = ", ".join(columns)
+        conflict_target = ", ".join(conflict_columns)
+        
+        # Create the SQL merge query
+        merge_query = f"""
+        INSERT INTO {table_name} ({columns_to_insert})
+        VALUES ({value_placeholders})
+        ON CONFLICT ({conflict_target}) 
+        DO NOTHING;
+        """
+        
+        return merge_query
 
     # Get stock data for chosen ticker within range and interval
     def getStockChart(ticker, withinRange, interval, session):
@@ -152,12 +177,12 @@ with models.DAG(
                 break  # <- Exit the loop once we find the first valid entry
             
         data = [{
-            'timestamp': timestamps[valid_index],
-            'high': quote['high'][valid_index],
-            'low': quote['low'][valid_index],
-            'open': quote['open'][valid_index],
-            'close': quote['close'][valid_index],
-            'volume': quote['volume'][valid_index],
+            'timestamp': str(timestamps[valid_index]),
+            'high': str(quote['high'][valid_index]),
+            'low': str(quote['low'][valid_index]),
+            'open': str(quote['open'][valid_index]),
+            'close': str(quote['close'][valid_index]),
+            'volume': str(quote['volume'][valid_index]),
         }]
 
         # Create DataFrame and add columns
@@ -201,13 +226,17 @@ with models.DAG(
             for ticker in tickers: 
                 chart = getStockChart(ticker, "5d", "1d", session)
                 charts = pd.concat([chart, charts], ignore_index=True)
-                uploadToDB(charts, 'dailyChart')
+                chartTableName = 'stockChart'
+                chartsMQ = generateMergeQuery(chartTableName, charts)
+                uploadToDB(chartTableName, charts, chartsMQ)
 
             # Fetch monthly quotes (7th because today (today :)))
-            # TODO: Ändra innan airflow så att datan hämtas
+            # TODO: Ändra dag villkoret innan airflow så att datan hämtas
             if datetime.now().day == 7:
                 quotes = getStockQuotes(tickers, session)
-                uploadToDB(quotes, 'stockQuotes')
+                quoteTableName = 'stockQuotes'
+                quotesMQ = generateMergeQuery(quoteTableName, quotes)
+                uploadToDB(quoteTableName, quotes, quotesMQ)
 
     # Define pipeline, run this script w/ bash commands
     Start = BashOperator(

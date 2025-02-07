@@ -4,7 +4,7 @@ import pandas as pd
 import time
 import sys
 
-YAHOO_FINANCE_API_KEY = "lägg till nyckel"
+YAHOO_FINANCE_API_KEY = "137f78e0f7msh62e445a737cf689p109e79jsne0788c058c05"
 YAHOO_FINANCE_HOST = "yahoo-finance-real-time1.p.rapidapi.com"
 BASE_URL = "https://yahoo-finance-real-time1.p.rapidapi.com/"
 
@@ -61,6 +61,32 @@ def Request(url: str, session, attempt: int = 0):
     print(f"Unexpected error {response.status_code}: {response.reason}. More info: {response.text}")
     return None
 
+def generateMergeQuery(table_name: str, df: pd.DataFrame):
+    # Get columns from the dataframe
+    columns = df.columns.tolist()
+    
+    # Determine the conflict column and what to update in case of a conflict
+    if table_name == 'stockChart':
+        conflict_columns = ['symbol', 'timestamp']
+    elif table_name == 'stockQuotes':
+        conflict_columns = ['symbol']
+    else:
+        raise ValueError(f"Unknown table: {table_name}")
+
+    value_placeholders = ", ".join(["%s"] * len(columns))
+    columns_to_insert = ", ".join(columns)
+    conflict_target = ", ".join(conflict_columns)
+    
+    # Create the SQL merge query
+    merge_query = f"""
+    INSERT INTO {table_name} ({columns_to_insert})
+    VALUES ({value_placeholders})
+    ON CONFLICT ({conflict_target}) 
+    DO NOTHING;
+    """
+    
+    return merge_query
+
 # Get stock data for chosen ticker within range and interval
 def getStockChart(ticker, withinRange, interval, session):
     url = f"{BASE_URL}/stock/get-chart?symbol={ticker}&lang=en-US&useYfid=true&includeAdjustedClose=true&events=div%2Csplit%2Cearn&range={withinRange}&interval={interval}"
@@ -87,12 +113,12 @@ def getStockChart(ticker, withinRange, interval, session):
             break  # Exit the loop once we find the first valid entry
         
     data = [{
-        'timestamp': timestamps[valid_index],
-        'high': quote['high'][valid_index],
-        'low': quote['low'][valid_index],
-        'open': quote['open'][valid_index],
-        'close': quote['close'][valid_index],
-        'volume': quote['volume'][valid_index],
+        'timestamp': str(timestamps[valid_index]),
+        'high': str(quote['high'][valid_index]),
+        'low': str(quote['low'][valid_index]),
+        'open': str(quote['open'][valid_index]),
+        'close': str(quote['close'][valid_index]),
+        'volume': str(quote['volume'][valid_index]),
     }]
 
     # Create DataFrame and add columns
@@ -148,11 +174,15 @@ def fetchYahooData():
             if chart is not None:
                 charts = pd.concat([charts, chart], ignore_index=True)
 
+        chartMQ = generateMergeQuery('stockChart', charts)
+        print(chartMQ)
         saveToCSV(charts, f"daily_stock_data_{today}.csv")
 
         # Fetch monthly quotes (run only on the 7th day of the month)
         if datetime.now().day == 7:
             quotes = getStockQuotes(tickers, session)
+            quoteMQ = generateMergeQuery('stockQuotes', quotes)
+            print(quoteMQ)
             saveToCSV(quotes, f"monthly_stock_quotes_{today}.csv")
 
 # Run the function
