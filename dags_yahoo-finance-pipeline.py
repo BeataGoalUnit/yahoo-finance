@@ -38,7 +38,7 @@ default_args = {
 }
 
 # Define the DAG
-# TODO: Vad här ska ändras? start_date bl.a
+# TODO: start_date?
 with models.DAG(
     dag_id='yahoo-finance-pipeline',
     description='Fetches data from yahoo finance real time. Then ... ', 
@@ -55,8 +55,6 @@ with models.DAG(
 
             df["timestamp"] = datetime.now()
 
-            # TODO: Vad gör vi av df? SQL connection string? (Inte in i BQ)
-            # Call the merge_to_postgres function to insert the data
             is_prod = False # <- TODO: hur sätts den?
             cloudsqlmigration.postgres.merge_to_postgres(df, merge_query, is_prod=is_prod)
 
@@ -217,7 +215,6 @@ with models.DAG(
                 "x-rapidapi-host": YAHOO_FINANCE_HOST
             })
 
-            # TODO: en initial load av historisk data (är get quotes med längre range) - om db tom???
 
             # Each day - fetch latest data:
             charts = pd.DataFrame()
@@ -229,7 +226,6 @@ with models.DAG(
                 uploadToDB(charts, chartTableName, chartsMQ)
 
             # Fetch monthly quotes (7th because today (today :)))
-            # TODO: Ändra dag villkoret innan airflow så att datan hämtas
             if datetime.now().day == 7:
                 quotes = getStockQuotes(tickers, session)
                 quoteTableName = 'stockquotes'

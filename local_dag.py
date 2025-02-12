@@ -10,31 +10,32 @@ from datetime import datetime, timedelta
 YAHOO_FINANCE_API_KEY = "137f78e0f7msh62e445a737cf689p109e79jsne0788c058c05" 
 YAHOO_FINANCE_HOST = "yahoo-finance-real-time1.p.rapidapi.com"
 BASE_URL = "https://yahoo-finance-real-time1.p.rapidapi.com/"
-
-# TICKERS FOR TESTING:
 tickers = ["AIK-B.ST", "MANU"]
-
-# Mapping for club IDs based on the symbol
 clubIdMapping = {
     "AIK-B.ST": 1,
     "MANU": 2 
 }
 
+# -----------------------------------------------------------------  #             
+# ------------------ Upload to DB ---------------------------------- #
+# -----------------------------------------------------------------  #  
 def uploadToDB(df: pd.DataFrame, table_name: str, merge_query: str):
     if df.empty:
         print(f"{datetime.now()}: Response recieved for {table_name} was empty. Skipping upload...")
         return
-
     merge_to_postgres(df, merge_query, len(df.columns))
-
     print("{} Loaded Yahoo Finance data to {}".format(datetime.now(), table_name))
 
+# -----------------------------------------------------------------  #             
+# ----------------------- Query DB --------------------------------- #
+# -----------------------------------------------------------------  #  
 def queryToDB(query: str):
     df = run_sql_query(query)
     return df
     
-            
-# Makes an API request and handles errors with retries if necessary.
+# -----------------------------------------------------------------  #             
+# Makes an API request and handles errors with retries if necessary. #
+# -----------------------------------------------------------------  #  
 def Request(url: str, session, attempt: int = 0):
     response = session.get(url)
 
@@ -95,32 +96,42 @@ def Request(url: str, session, attempt: int = 0):
     print(f"When calling {url}: An unexpected error occured: {response.status_code} {response.reason}. More info: {response.text}")
     return None
 
+# -----------------------------------------------------------------  #  
+# ------------------- Generates a merge query ---------------------  #  
+# -----------------------------------------------------------------  #  
 def generateMergeQuery(df: pd.DataFrame, table_name: str):
-    # Get columns from the dataframe
     columns = df.columns.tolist()
-    
-    # Determine the conflict column and what to update in case of a conflict
-    if table_name == 'stockchart':
-        conflict_columns = ['timestamp']
-    elif table_name == 'stockquotes':
-        conflict_columns = ['symbol']
-    else:
-        raise ValueError(f"Unknown table: {table_name}")
-
     value_placeholders = ", ".join(["%s"] * len(columns))
     columns_to_insert = ", ".join(columns)
-    conflict_target = ", ".join(conflict_columns)
     
-    # Create the SQL merge query
-    merge_query = f"""
-    INSERT INTO {table_name} ({columns_to_insert})
-    VALUES ({value_placeholders})
-    ON CONFLICT ({conflict_target}) 
-    DO NOTHING;
-    """
+    if table_name == 'stockchart':
+        conflict_columns = ['timestamp']
+        conflict_target = ", ".join(conflict_columns)
+        
+        merge_query = f"""
+        INSERT INTO {table_name} ({columns_to_insert})
+        VALUES ({value_placeholders})
+        ON CONFLICT ({conflict_target}) 
+        DO NOTHING;
+        """
+    elif table_name == 'stockquotes':
+        conflict_columns = ['symbol']
+        conflict_target = ", ".join(conflict_columns)
+        update_set = ", ".join([f"{col} = EXCLUDED.{col}" for col in columns])
+        
+        merge_query = f"""
+        INSERT INTO {table_name} ({columns_to_insert})
+        VALUES ({value_placeholders})
+        ON CONFLICT ({conflict_target}) 
+        DO UPDATE SET {update_set};
+        """
+    else:
+        raise ValueError(f"Unknown table: {table_name}")
     return merge_query
 
-# Get stock data for chosen ticker within range and interval
+# -----------------------------------------------------------------  #  
+# --- Get stock data for chosen ticker within range and interval --- #
+# -----------------------------------------------------------------  #  
 def getStockChart(ticker, withinRange, interval, session):
     url = f"{BASE_URL}/stock/get-chart?symbol={ticker}&lang=en-US&useYfid=true&includeAdjustedClose=true&events=div%2Csplit%2Cearn&range={withinRange}&interval={interval}"
     res = Request(url, session=session)
@@ -137,9 +148,8 @@ def getStockChart(ticker, withinRange, interval, session):
         print(f"No valid quote data for {ticker}.")
         return None
 
-    valid_index = len(timestamps) - 1  # default to last index
-
-    # Iterate backward through 'close' values to find the first valid index
+    # default to last ingex, iterate backward through 'close' values to find the first valid index
+    valid_index = len(timestamps) - 1
     for i in range(valid_index, -1, -1):  # <- Start from the last index and move backwards
         if quote['close'][i] is not None:
             valid_index = i
@@ -154,13 +164,14 @@ def getStockChart(ticker, withinRange, interval, session):
         'volume': quote['volume'][valid_index],
     }]
 
-    # Create DataFrame and add columns
     df = pd.DataFrame(data)
     df["symbol"] = ticker
     df["clubid"] = clubIdMapping.get(ticker, None)
     return df[['timestamp', 'high', 'low', 'open', 'close', 'volume', 'symbol', 'clubid']]
 
-# Get stock quotes, general info, can take max 200 tickers
+# -----------------------------------------------------------------  #  
+# ---- Get stock quotes, general info, can take max 200 tickers ---- #
+# -----------------------------------------------------------------  #  
 def getStockQuotes(tickersToGet, session):
     ticker_query = "%2C".join(tickersToGet)
     url = f"{BASE_URL}/market/get-quotes?region=US&symbols={ticker_query}"
@@ -169,20 +180,37 @@ def getStockQuotes(tickersToGet, session):
     if res is None or res.empty or 'quoteResponse' not in res or 'result' not in res.get('quoteResponse', {}):
         print("Monthly stock quotes could not be found.")
         return None
-
-
     result_data = res['quoteResponse']['result']
     if not result_data:
         print("No result data found for monthly quotes.")
         return None
-
-    # Create DataFrame and add columns      
+    
     df = pd.DataFrame(result_data)
     df["clubid"] = df["symbol"].map(clubIdMapping)
     df["timestamp"] = int(datetime.now().timestamp())
     return df[['symbol', 'timestamp', 'regularMarketPrice', 'marketCap', 'currency', 'exchangeTimezoneShortName', 'fullExchangeName', 'gmtOffSetMilliseconds', 'sharesOutstanding', 'beta', 'longName', 'clubid']]
 
-# Fetches data from Yahoo Finance Real Time
+# -----------------------------------------------------------------  #  
+# ---------- Wrappers for fetch data and upload to DB -------------- #
+# -----------------------------------------------------------------  #  
+def fecthQuotesAndUploadToDB(tickers, session):
+        quotes = getStockQuotes(tickers, session)
+        quoteTableName = 'stockquotes'
+        quotesMQ = generateMergeQuery(quotes, quoteTableName)
+        uploadToDB(quotes, quoteTableName, quotesMQ)
+
+def fetchChartsAndUploadToDB(session, range):
+        charts = pd.DataFrame()
+        for ticker in tickers: 
+            chart = getStockChart(ticker, range, "1d", session)
+            charts = pd.concat([chart, charts], ignore_index=True)
+            chartTableName = 'stockchart'
+            chartsMQ = generateMergeQuery(charts, chartTableName)
+            uploadToDB(charts, chartTableName, chartsMQ)   
+
+# -----------------------------------------------------------------  #  
+# ---------------- Main function - called in pipeline -------------- #
+# -----------------------------------------------------------------  #  
 def integrationYahooFinance(): 
     with Session() as session:
         session.headers.update({
@@ -190,34 +218,32 @@ def integrationYahooFinance():
             "x-rapidapi-host": YAHOO_FINANCE_HOST
         })
 
-        # TODO: First check - has tables? 
+       #  TODO: check if has tables 'stockchart' and 'stockquotes'
 
-        hasQuoteData = queryToDB("SELECT * FROM stockquotes;")
-        if hasQuoteData.empty:
-            print("No data in stockquotes, fetching...")
-            quotes = getStockQuotes(tickers, session)
-            quoteTableName = 'stockquotes'
-            quotesMQ = generateMergeQuery(quotes, quoteTableName)
-            uploadToDB(quotes, quoteTableName, quotesMQ)
+        # Run daily - if empty, bigger range
+        hasChartData = queryToDB("SELECT EXISTS (SELECT 1 FROM stockchart);")
+
+        # get boolean value from panda df:
+        if hasChartData.iloc[0, 0]:
+            print("Has stockchart data")
+            fetchChartsAndUploadToDB(session, "5d")
         else:
-            hasQuoteData['timestamp'] = pd.to_datetime(hasQuoteData['timestamp'], unit="s")
-            latest_timestamp = hasQuoteData["timestamp"].max()
-            one_month_ago = datetime.now() - timedelta(days=30)
-            if latest_timestamp < one_month_ago:
+            print("Has no stockchart data! Fix here so it can fetch older data") # <-- TODO!
+            fetchChartsAndUploadToDB(session, "5d")
+
+        # Run monthly
+        currentQuoteData = queryToDB("SELECT * FROM stockquotes;")
+        if currentQuoteData.empty:
+            print("No data in stockquotes, fetching...")
+            fecthQuotesAndUploadToDB(tickers, session)
+        else:
+            currentQuoteData['timestamp'] = pd.to_datetime(currentQuoteData['timestamp'], unit="s")
+            latestTimestamp = currentQuoteData["timestamp"].max()
+            oneMonthAgo = datetime.now() - timedelta(days=30)
+            if latestTimestamp < oneMonthAgo:
                 print("stockquotes data older than a month, fetching...")
-                quotes = getStockQuotes(tickers, session)
-                quoteTableName = 'stockquotes'
-                quotesMQ = generateMergeQuery(quotes, quoteTableName)
-                uploadToDB(quotes, quoteTableName, quotesMQ)
+                fecthQuotesAndUploadToDB(tickers, session)
             else:
                 print("stockquotes data is fetched within this month...")
-
-        charts = pd.DataFrame()
-        for ticker in tickers: 
-            chart = getStockChart(ticker, "5d", "1d", session)
-            charts = pd.concat([chart, charts], ignore_index=True)
-            chartTableName = 'stockchart'
-            chartsMQ = generateMergeQuery(charts, chartTableName)
-            uploadToDB(charts, chartTableName, chartsMQ)
 
 integrationYahooFinance()
