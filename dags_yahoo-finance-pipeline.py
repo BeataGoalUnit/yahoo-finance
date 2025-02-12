@@ -1,13 +1,11 @@
 from airflow import models
 from airflow.operators.python import PythonOperator
 from airflow.operators.bash import BashOperator
-from airflow.providers.google.cloud.operators.bigquery import BigQueryInsertJobOperator # <- TODO: Inte använda väl?
 from airflow.utils.dates import days_ago
 
 from datetime import datetime
 from requests import Session
 import pandas as pd
-from google.cloud import bigquery # <- TODO: Inte använda väl?
 import cloudsqlmigration.postgres
 import sys
 import time
@@ -24,7 +22,7 @@ tickers = ["AIK-B.ST", "MANU"]
 
 # Mapping for club IDs based on the symbol
 # TODO: Mappa till rätt IDs för Manchester United och AIK:
-club_id_mapping = {
+clubIdMapping = {
     "AIK-B.ST": 1,
     "MANU": 2 
 }
@@ -177,19 +175,19 @@ with models.DAG(
                 break  # <- Exit the loop once we find the first valid entry
             
         data = [{
-            'timestamp': str(timestamps[valid_index]),
-            'high': str(quote['high'][valid_index]),
-            'low': str(quote['low'][valid_index]),
-            'open': str(quote['open'][valid_index]),
-            'close': str(quote['close'][valid_index]),
-            'volume': str(quote['volume'][valid_index]),
+            'timestamp': timestamps[valid_index],
+            'high': quote['high'][valid_index],
+            'low': quote['low'][valid_index],
+            'open': quote['open'][valid_index],
+            'close': quote['close'][valid_index],
+            'volume': quote['volume'][valid_index],
         }]
 
         # Create DataFrame and add columns
         df = pd.DataFrame(data)
         df["symbol"] = ticker
-        df["club_id"] = club_id_mapping.get(ticker, None)
-        return df[['timestamp', 'high', 'low', 'open', 'close', 'volume', 'symbol', 'club_id']]
+        df["clubId"] = clubIdMapping.get(ticker, None)
+        return df[['timestamp', 'high', 'low', 'open', 'close', 'volume', 'symbol', 'clubId']]
     
     # Get stock quotes, general info, can take max 200 tickers
     def getStockQuotes(tickersToGet, session):
@@ -208,8 +206,8 @@ with models.DAG(
 
         # Create DataFrame and add columns      
         df = pd.DataFrame(result_data)
-        df["club_id"] = df["symbol"].map(club_id_mapping)
-        return df[['symbol', 'regularMarketPrice', 'marketCap', 'currency', 'exchangeTimezoneShortName', 'fullExchangeName', 'gmtOffSetMilliseconds', 'sharesOutstanding', 'beta', 'longName', 'club_id']]
+        df["clubId"] = df["symbol"].map(clubIdMapping)
+        return df[['symbol', 'regularMarketPrice', 'marketCap', 'currency', 'exchangeTimezoneShortName', 'fullExchangeName', 'gmtOffSetMilliseconds', 'sharesOutstanding', 'beta', 'longName', 'clubId']]
 
     # Fetches data from Yahoo Finance Real Time
     def integrationYahooFinance(): 

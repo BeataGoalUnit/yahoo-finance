@@ -113,12 +113,12 @@ def getStockChart(ticker, withinRange, interval, session):
             break  # Exit the loop once we find the first valid entry
         
     data = [{
-        'timestamp': str(timestamps[valid_index]),
-        'high': str(quote['high'][valid_index]),
-        'low': str(quote['low'][valid_index]),
-        'open': str(quote['open'][valid_index]),
-        'close': str(quote['close'][valid_index]),
-        'volume': str(quote['volume'][valid_index]),
+        'timestamp': timestamps[valid_index],
+        'high': quote['high'][valid_index],
+        'low': quote['low'][valid_index],
+        'open': quote['open'][valid_index],
+        'close': quote['close'][valid_index],
+        'volume': quote['volume'][valid_index],
     }]
 
     # Create DataFrame and add columns
