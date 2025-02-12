@@ -10,7 +10,7 @@ import cloudsqlmigration.postgres
 import sys
 import time
 
-YAHOO_FINANCE_API_KEY = "lägg till nyckel" # <- TODO: Subscribea och använd Goalunit rapidapi key
+YAHOO_FINANCE_API_KEY = "nyckel" # <- TODO: Subscribea och använd Goalunit rapidapi key
 YAHOO_FINANCE_HOST = "yahoo-finance-real-time1.p.rapidapi.com"
 BASE_URL = "https://yahoo-finance-real-time1.p.rapidapi.com/"
 
@@ -128,9 +128,9 @@ with models.DAG(
         columns = df.columns.tolist()
         
         # Determine the conflict column and what to update in case of a conflict
-        if table_name == 'stockChart':
+        if table_name == 'stockchart':
             conflict_columns = ['symbol', 'timestamp']
-        elif table_name == 'stockQuotes':
+        elif table_name == 'stockquotes':
             conflict_columns = ['symbol']
         else:
             raise ValueError(f"Unknown table: {table_name}")
@@ -186,8 +186,8 @@ with models.DAG(
         # Create DataFrame and add columns
         df = pd.DataFrame(data)
         df["symbol"] = ticker
-        df["clubId"] = clubIdMapping.get(ticker, None)
-        return df[['timestamp', 'high', 'low', 'open', 'close', 'volume', 'symbol', 'clubId']]
+        df["clubid"] = clubIdMapping.get(ticker, None)
+        return df[['timestamp', 'high', 'low', 'open', 'close', 'volume', 'symbol', 'clubid']]
     
     # Get stock quotes, general info, can take max 200 tickers
     def getStockQuotes(tickersToGet, session):
@@ -206,8 +206,8 @@ with models.DAG(
 
         # Create DataFrame and add columns      
         df = pd.DataFrame(result_data)
-        df["clubId"] = df["symbol"].map(clubIdMapping)
-        return df[['symbol', 'regularMarketPrice', 'marketCap', 'currency', 'exchangeTimezoneShortName', 'fullExchangeName', 'gmtOffSetMilliseconds', 'sharesOutstanding', 'beta', 'longName', 'clubId']]
+        df["clubid"] = df["symbol"].map(clubIdMapping)
+        return df[['symbol', 'regularMarketPrice', 'marketCap', 'currency', 'exchangeTimezoneShortName', 'fullExchangeName', 'gmtOffSetMilliseconds', 'sharesOutstanding', 'beta', 'longName', 'clubid']]
 
     # Fetches data from Yahoo Finance Real Time
     def integrationYahooFinance(): 
@@ -224,17 +224,17 @@ with models.DAG(
             for ticker in tickers: 
                 chart = getStockChart(ticker, "5d", "1d", session)
                 charts = pd.concat([chart, charts], ignore_index=True)
-                chartTableName = 'stockChart'
-                chartsMQ = generateMergeQuery(chartTableName, charts)
-                uploadToDB(chartTableName, charts, chartsMQ)
+                chartTableName = 'stockchart'
+                chartsMQ = generateMergeQuery(charts, chartTableName)
+                uploadToDB(charts, chartTableName, chartsMQ)
 
             # Fetch monthly quotes (7th because today (today :)))
             # TODO: Ändra dag villkoret innan airflow så att datan hämtas
             if datetime.now().day == 7:
                 quotes = getStockQuotes(tickers, session)
-                quoteTableName = 'stockQuotes'
-                quotesMQ = generateMergeQuery(quoteTableName, quotes)
-                uploadToDB(quoteTableName, quotes, quotesMQ)
+                quoteTableName = 'stockquotes'
+                quotesMQ = generateMergeQuery(quotes, quoteTableName)
+                uploadToDB(quotes, quoteTableName, quotesMQ)
 
     # Define pipeline, run this script w/ bash commands
     Start = BashOperator(
