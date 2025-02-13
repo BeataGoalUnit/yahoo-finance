@@ -98,7 +98,7 @@ def run_sql_query(query: str, commit_changes: bool = False):
                 logging.info("Query executed and committed successfully.")
         except Exception as e:
             logging.error(f"Failed to execute query: {e}")
-            conn.rollback()  # 🔄 Roll back on failure
+            conn.rollback()
             raise
         finally:
             cur.close()

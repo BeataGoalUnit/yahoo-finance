@@ -15,8 +15,8 @@ tables = ['stockchart', 'stockquote']
 tickers = ["AIK-B.ST", "MANU"]
 
 clubIdMapping = {
-    "AIK-B.ST": 1,
-    "MANU": 2 
+    "AIK-B.ST": 9185,
+    "MANU": 2188 
 }
 
 # -----------------------------------------------------------------  #             
