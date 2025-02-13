@@ -13,6 +13,7 @@ BASE_URL = "https://yahoo-finance-real-time1.p.rapidapi.com/"
 
 tables = ['stockchart', 'stockquote']
 tickers = ["AIK-B.ST", "MANU"]
+
 clubIdMapping = {
     "AIK-B.ST": 1,
     "MANU": 2 
@@ -21,12 +22,12 @@ clubIdMapping = {
 # -----------------------------------------------------------------  #             
 # ------------------ Upload to DB ---------------------------------- #
 # -----------------------------------------------------------------  #  
-def uploadToDB(df: pd.DataFrame, table_name: str, merge_query: str):
+def uploadToDB(df: pd.DataFrame, tableName: str, mergeQuery: str):
     if df.empty:
-        print(f"{datetime.now()}: Response recieved for {table_name} was empty. Skipping upload...")
+        print(f"{datetime.now()}: Response recieved for {tableName} was empty. Skipping upload...")
         return
-    merge_to_postgres(df, merge_query, len(df.columns))
-    print("{} Loaded Yahoo Finance data to {}".format(datetime.now(), table_name))
+    merge_to_postgres(df, mergeQuery, len(df.columns))
+    print("{} Loaded Yahoo Finance data to {}".format(datetime.now(), tableName))
     
 # -----------------------------------------------------------------  #             
 # Makes an API request and handles errors with retries if necessary. #
@@ -100,29 +101,29 @@ def generateMergeQuery(df: pd.DataFrame, tableName: str):
     columnsToInsert = ", ".join(columns)
     
     if tableName == 'stockchart':
-        conflict_columns = ['timestamp']
-        conflict_target = ", ".join(conflict_columns)
+        conflictColumns = ['timestamp']
+        conflictTarget = ", ".join(conflictColumns)
         
-        merge_query = f"""
+        mergeQuery = f"""
         INSERT INTO {tableName} ({columnsToInsert})
         VALUES ({valuePlaceholders})
-        ON CONFLICT ({conflict_target}) 
+        ON CONFLICT ({conflictTarget}) 
         DO NOTHING;
         """
     elif tableName == 'stockquote':
-        conflict_columns = ['symbol']
-        conflict_target = ", ".join(conflict_columns)
-        update_set = ", ".join([f"{col} = EXCLUDED.{col}" for col in columns])
+        conflictColumns = ['symbol']
+        conflictTarget = ", ".join(conflictColumns)
+        updateSet = ", ".join([f"{col} = EXCLUDED.{col}" for col in columns])
         
-        merge_query = f"""
+        mergeQuery = f"""
         INSERT INTO {tableName} ({columnsToInsert})
         VALUES ({valuePlaceholders})
-        ON CONFLICT ({conflict_target}) 
-        DO UPDATE SET {update_set};
+        ON CONFLICT ({conflictTarget}) 
+        DO UPDATE SET {updateSet};
         """
     else:
         raise ValueError(f"Unknown table: {tableName}")
-    return merge_query
+    return mergeQuery
 
 # -----------------------------------------------------------------  #  
 # --- Get stock data for chosen ticker within range and interval --- #
@@ -135,28 +136,28 @@ def getStockChartData(ticker, withinRange, interval, session):
         print(f"No valid data found for {ticker}.")
         return None
 
-    chart_data = res['chart']['result'][0]
-    timestamps = chart_data.get('timestamp', [])
-    quote = chart_data.get('indicators', {}).get('quote', [])[0]
+    chartData = res['chart']['result'][0]
+    timestamps = chartData.get('timestamp', [])
+    quote = chartData.get('indicators', {}).get('quote', [])[0]
 
     if not timestamps or not quote:
         print(f"No valid quote data for {ticker}.")
         return None
 
     # default to last ingex, iterate backward through 'close' values to find the first valid index
-    valid_index = len(timestamps) - 1
-    for i in range(valid_index, -1, -1):  # <- Start from the last index and move backwards
+    validIndex = len(timestamps) - 1
+    for i in range(validIndex, -1, -1):  # <- Start from the last index and move backwards
         if quote['close'][i] is not None:
-            valid_index = i
+            validIndex = i
             break  # <- Exit the loop once we find the first valid entry
         
     data = [{
-        'timestamp': timestamps[valid_index],
-        'high': quote['high'][valid_index],
-        'low': quote['low'][valid_index],
-        'open': quote['open'][valid_index],
-        'close': quote['close'][valid_index],
-        'volume': quote['volume'][valid_index],
+        'timestamp': timestamps[validIndex],
+        'high': quote['high'][validIndex],
+        'low': quote['low'][validIndex],
+        'open': quote['open'][validIndex],
+        'close': quote['close'][validIndex],
+        'volume': quote['volume'][validIndex],
     }]
 
     df = pd.DataFrame(data)
@@ -169,19 +170,19 @@ def getStockChartData(ticker, withinRange, interval, session):
 # ---- Get stock quotes, general info, can take max 200 tickers ---- #
 # -----------------------------------------------------------------  #  
 def getStockQuotes(tickersToGet, session):
-    ticker_query = "%2C".join(tickersToGet)
-    url = f"{BASE_URL}/market/get-quotes?region=US&symbols={ticker_query}"
+    tickerQuery = "%2C".join(tickersToGet)
+    url = f"{BASE_URL}/market/get-quotes?region=US&symbols={tickerQuery}"
     res = Request(url, session=session)
 
     if res is None or res.empty or 'quoteResponse' not in res or 'result' not in res.get('quoteResponse', {}):
         print("Monthly stock quotes could not be found.")
         return None
-    result_data = res['quoteResponse']['result']
-    if not result_data:
+    resultData = res['quoteResponse']['result']
+    if not resultData:
         print("No result data found for monthly quotes.")
         return None
     
-    df = pd.DataFrame(result_data)
+    df = pd.DataFrame(resultData)
     df["clubid"] = df["symbol"].map(clubIdMapping)
     df["timestamp"] = int(datetime.now().timestamp())
     return df[['symbol', 'timestamp', 'regularMarketPrice', 'marketCap', 'currency', 'exchangeTimezoneShortName', 'fullExchangeName', 'gmtOffSetMilliseconds', 'sharesOutstanding', 'beta', 'longName', 'clubid']]
