@@ -80,19 +80,25 @@ def call_sp(sp: str):
         finally:
             cur.close()
 
-def run_sql_query(query: str):
-    """Execute a SQL query and return the results as a Pandas DataFrame."""
+def run_sql_query(query: str, commit_changes: bool = False):
+    """Execute a SQL query. Commit changes false for SELECT."""
     with get_db_connection() as conn:
         try:
             cur = conn.cursor()
             cur.execute(query)
-            results = cur.fetchall()
-            column_names = [desc[0] for desc in cur.description]
-            df = pd.DataFrame(results, columns=column_names)
-            logging.info(f"Query executed successfully. {len(df)} rows returned.")
-            return df
+
+            if not commit_changes:
+                results = cur.fetchall()
+                column_names = [desc[0] for desc in cur.description]
+                df = pd.DataFrame(results, columns=column_names)
+                logging.info(f"Query executed successfully. {len(df)} rows returned.")
+                return df
+            else:
+                conn.commit()
+                logging.info("Query executed and committed successfully.")
         except Exception as e:
             logging.error(f"Failed to execute query: {e}")
+            conn.rollback()  # 🔄 Roll back on failure
             raise
         finally:
             cur.close()
