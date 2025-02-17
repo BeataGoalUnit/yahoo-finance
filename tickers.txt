@@ -2,5 +2,21 @@ tickers = ["AIK-B.ST", "MANU", "AAB.CO", "AGF-B.CO", "PARKEN.CO", "BIF.CO", "CCP
 
 clubIdMapping = {
     "AIK-B.ST": 9185,
-    "MANU": 2188 
+    "MANU": 2188, 
+    "AAB.CO": 31088, 
+    "AGF-B.CO": 31974, 
+    "PARKEN.CO": 31402, 
+    "BIF.CO": 31169, 
+    "CCP.L": 671, 
+    "BVB.DE": 31914, 
+    "AJAX.AS": 15623, 
+    "JUVE.MI": 21376, 
+    "SSL.MI": 21439, 
+    "FCP.LS": 13421, 
+    "SLBEN.LS": 13031, 
+    "SCP.LS": 13547, 
+    "FENER.IS": 8082, 
+    "GSRAY.IS": 8094, 
+    "BJKAS.IS": 7951, 
+    "TSPOR.IS": 8444
 }
