@@ -6,21 +6,37 @@ from airflow.utils.dates import days_ago
 from datetime import datetime, timedelta
 from requests import Session
 import pandas as pd
-import cloudsqlmigration.postgres
+import postgres
 import sys
 import time
 
-YAHOO_FINANCE_API_KEY = "nyckel" # <- TODO: Subscribea och använd Goalunit rapidapi key
+YAHOO_FINANCE_API_KEY = "nyckel" # TODO!
 YAHOO_FINANCE_HOST = "yahoo-finance-real-time1.p.rapidapi.com"
 BASE_URL = "https://yahoo-finance-real-time1.p.rapidapi.com/"
 
 schemaName = 'financial'
 tables = ['stockchart', 'stockquote']
-tickers = ["AIK-B.ST", "MANU"]
+tickers = ["AIK-B.ST", "MANU", "AAB.CO", "AGF-B.CO", "PARKEN.CO", "BIF.CO", "CCP.L", "BVB.DE", "AJAX.AS", "JUVE.MI", "SSL.MI", "FCP.LS", "SLBEN.LS", "SCP.LS", "FENER.IS", "GSRAY.IS", "BJKAS.IS", "TSPOR.IS"]
 
 clubIdMapping = {
     "AIK-B.ST": 9185,
-    "MANU": 2188 
+    "MANU": 2188, 
+    "AAB.CO": 31088, 
+    "AGF-B.CO": 31974, 
+    "PARKEN.CO": 31402, 
+    "BIF.CO": 31169, 
+    "CCP.L": 671, 
+    "BVB.DE": 31914, 
+    "AJAX.AS": 15623, 
+    "JUVE.MI": 21376, 
+    "SSL.MI": 21439, 
+    "FCP.LS": 13421, 
+    "SLBEN.LS": 13031, 
+    "SCP.LS": 13547, 
+    "FENER.IS": 8082, 
+    "GSRAY.IS": 8094, 
+    "BJKAS.IS": 7951, 
+    "TSPOR.IS": 8444
 }
 
 # Default Airflow task arguments
@@ -49,7 +65,7 @@ with models.DAG(
                 return
 
             is_prod = False # <- TODO: hur sätts den? False nu men True sen i prod?
-            cloudsqlmigration.postgres.merge_to_postgres(df, merge_query, len(df.columns), is_prod=is_prod)
+            postgres.merge_to_postgres(df, merge_query, len(df.columns), is_prod=is_prod)
             print("{} Loaded Yahoo Finance data to {}".format(datetime.now(), table_name))
             
     # -----------------------------------------------------------------  #             
@@ -226,12 +242,12 @@ with models.DAG(
     # --- Checks if schema and / or tables exists - else creates ------- #
     # -----------------------------------------------------------------  #  
     def createSchemaIfNotExists():
-        cloudsqlmigration.postgres.run_sql_query(f"CREATE SCHEMA IF NOT EXISTS {schemaName};", commit_changes=True)
+        postgres.run_sql_query(f"CREATE SCHEMA IF NOT EXISTS {schemaName};", commit_changes=True)
 
     def createTablesIfNotExists():
         for table in tables:
             if table == 'stockchart':
-                cloudsqlmigration.postgres.run_sql_query(f"""
+                postgres.run_sql_query(f"""
                     CREATE TABLE IF NOT EXISTS {schemaName}.{table} (
                         stockchartid SERIAL PRIMARY KEY,
                         timestamp BIGINT,
@@ -247,7 +263,7 @@ with models.DAG(
                     );
                 """, commit_changes=True)
             if table == 'stockquote':
-                cloudsqlmigration.postgres.run_sql_query(f"""
+                postgres.run_sql_query(f"""
                     CREATE TABLE IF NOT EXISTS {schemaName}.{table} (
                         stockquoteid SERIAL PRIMARY KEY,
                         symbol VARCHAR(10),
@@ -279,13 +295,13 @@ with models.DAG(
             createSchemaIfNotExists()
             createTablesIfNotExists()
 
-            # TODO: Om table empty - hämta längre range - ny metod  / "köra migrering" en gång?
+            # TODO: Om table empty - hämta längre range - ny metod  / "köra migrering" en gång? - daglig data sen 2014 = tungt?
 
             # Run daily
             fetchChartsAndUploadToDB(session, "5d")
 
             # Run monthly
-            currentQuoteData = cloudsqlmigration.postgres.run_sql_query(f"SELECT * FROM {schemaName}.stockquote;")
+            currentQuoteData = postgres.run_sql_query(f"SELECT * FROM {schemaName}.stockquote;")
             if currentQuoteData.empty:
                 print("No data in stockquote, fetching...")
                 fecthQuotesAndUploadToDB(tickers, session)
