@@ -14,6 +14,7 @@ YAHOO_FINANCE_API_KEY = "nyckel" # <- TODO: Subscribea och använd Goalunit rapi
 YAHOO_FINANCE_HOST = "yahoo-finance-real-time1.p.rapidapi.com"
 BASE_URL = "https://yahoo-finance-real-time1.p.rapidapi.com/"
 
+schemaName = 'financial'
 tables = ['stockchart', 'stockquote']
 tickers = ["AIK-B.ST", "MANU"]
 
@@ -123,25 +124,19 @@ with models.DAG(
         columnsToInsert = ", ".join(columns)
         
         if tableName == 'stockchart':
-            conflictColumns = ['timestamp']
+            conflictColumns = ['symbol', 'timestamp']
             conflictTarget = ", ".join(conflictColumns)
             
             mergeQuery = f"""
-            INSERT INTO {tableName} ({columnsToInsert})
+            INSERT INTO {schemaName}.{tableName} ({columnsToInsert})
             VALUES ({valuePlaceholders})
             ON CONFLICT ({conflictTarget}) 
             DO NOTHING;
             """
         elif tableName == 'stockquote':
-            conflictColumns = ['symbol']
-            conflictTarget = ", ".join(conflictColumns)
-            updateSet = ", ".join([f"{col} = EXCLUDED.{col}" for col in columns])
-            
             mergeQuery = f"""
-            INSERT INTO {tableName} ({columnsToInsert})
-            VALUES ({valuePlaceholders})
-            ON CONFLICT ({conflictTarget}) 
-            DO UPDATE SET {updateSet};
+            INSERT INTO {schemaName}.{tableName} ({columnsToInsert})
+            VALUES ({valuePlaceholders});
             """
         else:
             raise ValueError(f"Unknown table: {tableName}")
@@ -228,38 +223,46 @@ with models.DAG(
                 uploadToDB(charts, chartTableName, chartsMQ)   
 
     # -----------------------------------------------------------------  #  
-    # -------------- Checks if tables exists - else creates ------------ #
+    # --- Checks if schema and / or tables exists - else creates ------- #
     # -----------------------------------------------------------------  #  
+    def createSchemaIfNotExists():
+        cloudsqlmigration.postgres.run_sql_query(f"CREATE SCHEMA IF NOT EXISTS {schemaName};", commit_changes=True)
+
     def createTablesIfNotExists():
         for table in tables:
             if table == 'stockchart':
-                cloudsqlmigration.postgres.run_sql_query("""
-                    CREATE TABLE IF NOT EXISTS stockchart (
-                        timestamp BIGINT UNIQUE,
-                        high DOUBLE PRECISION,
-                        low DOUBLE PRECISION,
-                        open DOUBLE PRECISION,
-                        close DOUBLE PRECISION,
+                cloudsqlmigration.postgres.run_sql_query(f"""
+                    CREATE TABLE IF NOT EXISTS {schemaName}.{table} (
+                        stockchartid SERIAL PRIMARY KEY,
+                        timestamp BIGINT,
+                        high NUMERIC(18,2),
+                        low NUMERIC(18,2),
+                        open NUMERIC(18,2),
+                        close NUMERIC(18,2),
                         volume INTEGER,
                         symbol VARCHAR(10),
-                        clubid INT
+                        clubid INT,
+                        CONSTRAINT uc_timestamp_symbol UNIQUE (symbol, timestamp),
+                        CONSTRAINT fk_club_stockquote FOREIGN KEY (clubid) REFERENCES club.club(clubid)
                     );
                 """, commit_changes=True)
             if table == 'stockquote':
-                cloudsqlmigration.postgres.run_sql_query("""
-                    CREATE TABLE IF NOT EXISTS stockquote (
-                        symbol VARCHAR(10) UNIQUE,
-                        clubid INT,
+                cloudsqlmigration.postgres.run_sql_query(f"""
+                    CREATE TABLE IF NOT EXISTS {schemaName}.{table} (
+                        stockquoteid SERIAL PRIMARY KEY,
+                        symbol VARCHAR(10),
+                        clubid INT, 
                         marketcap BIGINT,
                         currency VARCHAR(10),
                         exchangeTimezoneShortName VARCHAR(10),
                         fullExchangeName TEXT,
                         gmtOffSetMilliseconds INT,
                         sharesOutstanding BIGINT,
-                        beta DOUBLE PRECISION,
+                        beta NUMERIC(18,2),
                         longName TEXT,
-                        regularMarketPrice DOUBLE PRECISION,
-                        timestamp BIGINT
+                        regularMarketPrice NUMERIC(18,2),
+                        timestamp BIGINT, 
+                        CONSTRAINT fk_club_stockchart FOREIGN KEY (clubid) REFERENCES club.club(clubid)
                     );
                 """, commit_changes=True)
 
@@ -273,6 +276,7 @@ with models.DAG(
                 "x-rapidapi-host": YAHOO_FINANCE_HOST
             })
 
+            createSchemaIfNotExists()
             createTablesIfNotExists()
 
             # TODO: Om table empty - hämta längre range - ny metod  / "köra migrering" en gång?
@@ -281,7 +285,7 @@ with models.DAG(
             fetchChartsAndUploadToDB(session, "5d")
 
             # Run monthly
-            currentQuoteData = cloudsqlmigration.postgres.run_sql_query("SELECT * FROM stockquote;")
+            currentQuoteData = cloudsqlmigration.postgres.run_sql_query(f"SELECT * FROM {schemaName}.stockquote;")
             if currentQuoteData.empty:
                 print("No data in stockquote, fetching...")
                 fecthQuotesAndUploadToDB(tickers, session)

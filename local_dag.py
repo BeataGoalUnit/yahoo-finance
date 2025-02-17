@@ -11,6 +11,7 @@ YAHOO_FINANCE_API_KEY = "137f78e0f7msh62e445a737cf689p109e79jsne0788c058c05"
 YAHOO_FINANCE_HOST = "yahoo-finance-real-time1.p.rapidapi.com"
 BASE_URL = "https://yahoo-finance-real-time1.p.rapidapi.com/"
 
+schemaName = 'financial'
 tables = ['stockchart', 'stockquote']
 tickers = ["AIK-B.ST", "MANU"]
 
@@ -101,25 +102,19 @@ def generateMergeQuery(df: pd.DataFrame, tableName: str):
     columnsToInsert = ", ".join(columns)
     
     if tableName == 'stockchart':
-        conflictColumns = ['timestamp']
+        conflictColumns = ['symbol', 'timestamp']
         conflictTarget = ", ".join(conflictColumns)
         
         mergeQuery = f"""
-        INSERT INTO {tableName} ({columnsToInsert})
+        INSERT INTO {schemaName}.{tableName} ({columnsToInsert})
         VALUES ({valuePlaceholders})
         ON CONFLICT ({conflictTarget}) 
         DO NOTHING;
         """
     elif tableName == 'stockquote':
-        conflictColumns = ['symbol']
-        conflictTarget = ", ".join(conflictColumns)
-        updateSet = ", ".join([f"{col} = EXCLUDED.{col}" for col in columns])
-        
         mergeQuery = f"""
-        INSERT INTO {tableName} ({columnsToInsert})
-        VALUES ({valuePlaceholders})
-        ON CONFLICT ({conflictTarget}) 
-        DO UPDATE SET {updateSet};
+        INSERT INTO {schemaName}.{tableName} ({columnsToInsert})
+        VALUES ({valuePlaceholders});
         """
     else:
         raise ValueError(f"Unknown table: {tableName}")
@@ -146,10 +141,10 @@ def getStockChartData(ticker, withinRange, interval, session):
 
     # default to last ingex, iterate backward through 'close' values to find the first valid index
     validIndex = len(timestamps) - 1
-    for i in range(validIndex, -1, -1):  # <- Start from the last index and move backwards
+    for i in range(validIndex, -1, -1):
         if quote['close'][i] is not None:
             validIndex = i
-            break  # <- Exit the loop once we find the first valid entry
+            break
         
     data = [{
         'timestamp': timestamps[validIndex],
@@ -206,38 +201,46 @@ def fetchChartsAndUploadToDB(session, range):
             uploadToDB(charts, chartTableName, chartsMQ)   
 
 # -----------------------------------------------------------------  #  
-# -------------- Checks if tables exists - else creates ------------ #
+# --- Checks if schema and / or tables exists - else creates ------- #
 # -----------------------------------------------------------------  #  
+def createSchemaIfNotExists():
+    run_sql_query(f"CREATE SCHEMA IF NOT EXISTS {schemaName};", commit_changes=True)
+
 def createTablesIfNotExists():
     for table in tables:
         if table == 'stockchart':
-            run_sql_query("""
-                CREATE TABLE IF NOT EXISTS stockchart (
-                    timestamp BIGINT UNIQUE,
-                    high DOUBLE PRECISION,
-                    low DOUBLE PRECISION,
-                    open DOUBLE PRECISION,
-                    close DOUBLE PRECISION,
+            run_sql_query(f"""
+                CREATE TABLE IF NOT EXISTS {schemaName}.{table} (
+                    stockchartid SERIAL PRIMARY KEY,
+                    timestamp BIGINT,
+                    high NUMERIC(18,2),
+                    low NUMERIC(18,2),
+                    open NUMERIC(18,2),
+                    close NUMERIC(18,2),
                     volume INTEGER,
                     symbol VARCHAR(10),
-                    clubid INT
+                    clubid INT,
+                    CONSTRAINT uc_timestamp_symbol UNIQUE (symbol, timestamp),
+                    CONSTRAINT fk_club_stockquote FOREIGN KEY (clubid) REFERENCES club.club(clubid)
                 );
             """, commit_changes=True)
         if table == 'stockquote':
-            run_sql_query("""
-                CREATE TABLE IF NOT EXISTS stockquote (
-                    symbol VARCHAR(10) UNIQUE,
-                    clubid INT,
+            run_sql_query(f"""
+                CREATE TABLE IF NOT EXISTS {schemaName}.{table} (
+                    stockquoteid SERIAL PRIMARY KEY,
+                    symbol VARCHAR(10),
+                    clubid INT, 
                     marketcap BIGINT,
                     currency VARCHAR(10),
                     exchangeTimezoneShortName VARCHAR(10),
                     fullExchangeName TEXT,
                     gmtOffSetMilliseconds INT,
                     sharesOutstanding BIGINT,
-                    beta DOUBLE PRECISION,
+                    beta NUMERIC(18,2),
                     longName TEXT,
-                    regularMarketPrice DOUBLE PRECISION,
-                    timestamp BIGINT
+                    regularMarketPrice NUMERIC(18,2),
+                    timestamp BIGINT, 
+                    CONSTRAINT fk_club_stockchart FOREIGN KEY (clubid) REFERENCES club.club(clubid)
                 );
             """, commit_changes=True)
     
@@ -251,14 +254,16 @@ def integrationYahooFinance():
             "x-rapidapi-host": YAHOO_FINANCE_HOST
         })
 
+        createSchemaIfNotExists()
         createTablesIfNotExists()
 
         # TODO: Om table empty - hämta längre range, ny metod  / "köra migrering" en gång?
+        
         # Run daily
         fetchChartsAndUploadToDB(session, "5d")
 
         # Run monthly
-        currentQuoteData = run_sql_query("SELECT * FROM stockquote;")
+        currentQuoteData = run_sql_query(f"SELECT * FROM {schemaName}.stockquote;")
         if currentQuoteData.empty:
             print("No data in stockquote, fetching...")
             fecthQuotesAndUploadToDB(tickers, session)
