@@ -172,6 +172,7 @@ with models.DAG(
         chartData = res['chart']['result'][0]
         timestamps = chartData.get('timestamp', [])
         quote = chartData.get('indicators', {}).get('quote', [])[0]
+        adjclose = chartData.get('indicators', {}).get('adjclose', [])[0]
 
         if not timestamps or not quote:
             print(f"No valid quote data for {ticker}.")
@@ -187,8 +188,8 @@ with models.DAG(
                     'low': quote['low'][i],
                     'open': quote['open'][i],
                     'close': quote['close'][i],
+                    'adjclose': adjclose['adjclose'][i],
                     'volume': quote['volume'][i],
-                    'adjclose': quote['adjclose'][i],
                 })
 
         if not valid_data:
@@ -198,7 +199,7 @@ with models.DAG(
         df = pd.DataFrame(valid_data)
         df["symbol"] = ticker
         df["clubid"] = clubIdMapping.get(ticker, None)
-        return df[['timestamp', 'high', 'low', 'open', 'close', 'volume', 'symbol', 'clubid']]
+        return df[['timestamp', 'high', 'low', 'open', 'close', 'adjclose', 'volume', 'symbol', 'clubid']]
 
 
     # -----------------------------------------------------------------  #  
@@ -220,7 +221,7 @@ with models.DAG(
         df = pd.DataFrame(resultData)
         df["clubid"] = df["symbol"].map(clubIdMapping)
         df["timestamp"] = int(datetime.now().timestamp())
-        return df[['symbol', 'timestamp', 'regularMarketPrice', 'marketCap', 'currency', 'exchangeTimezoneShortName', 'fullExchangeName', 'gmtOffSetMilliseconds', 'sharesOutstanding', 'beta', 'longName', 'clubid']]
+        return df[['symbol', 'shortName', 'timestamp', 'regularMarketPrice', 'marketCap', 'currency', 'financialCurrency', 'exchangeTimezoneShortName', 'exchange', 'fullExchangeName', 'gmtOffSetMilliseconds', 'sharesOutstanding', 'beta', 'bookValue', 'priceToBook', 'longName', 'clubid']]
 
     # -----------------------------------------------------------------  #  
     # ---------- Wrappers for fetch data and upload to DB -------------- #
@@ -255,6 +256,7 @@ with models.DAG(
                         low NUMERIC(18,2),
                         open NUMERIC(18,2),
                         close NUMERIC(18,2),
+                        adjclose NUMERIC(18,2),
                         volume INTEGER,
                         symbol VARCHAR(10),
                         clubid INT,
@@ -266,15 +268,20 @@ with models.DAG(
                 postgres.run_sql_query(f"""
                     CREATE TABLE IF NOT EXISTS {schemaName}.{table} (
                         stockquoteid SERIAL PRIMARY KEY,
-                        symbol VARCHAR(10),
+                        symbol VARCHAR(10
+                        shortName TEXT,
                         clubid INT, 
                         marketcap BIGINT,
                         currency VARCHAR(10),
+                        financialCurrency VARCHAR(10),
                         exchangeTimezoneShortName VARCHAR(10),
+                        exchange VARCHAR(10),
                         fullExchangeName TEXT,
                         gmtOffSetMilliseconds INT,
                         sharesOutstanding BIGINT,
                         beta NUMERIC(18,2),
+                        bookValue NUMERIC(18,2),
+                        priceToBook NUMERIC(18,2),
                         longName TEXT,
                         regularMarketPrice NUMERIC(18,2),
                         timestamp BIGINT, 

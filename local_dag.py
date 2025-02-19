@@ -150,6 +150,7 @@ def getStockChartData(ticker, withinRange, interval, session):
     chartData = res['chart']['result'][0]
     timestamps = chartData.get('timestamp', [])
     quote = chartData.get('indicators', {}).get('quote', [])[0]
+    adjclose = chartData.get('indicators', {}).get('adjclose', [])[0]
 
     if not timestamps or not quote:
         print(f"No valid quote data for {ticker}.")
@@ -165,8 +166,8 @@ def getStockChartData(ticker, withinRange, interval, session):
                 'low': quote['low'][i],
                 'open': quote['open'][i],
                 'close': quote['close'][i],
+                'adjclose': adjclose['adjclose'][i],
                 'volume': quote['volume'][i],
-                'adjclose': quote['adjclose'][i],
             })
 
     if not valid_data:
@@ -176,7 +177,7 @@ def getStockChartData(ticker, withinRange, interval, session):
     df = pd.DataFrame(valid_data)
     df["symbol"] = ticker
     df["clubid"] = clubIdMapping.get(ticker, None)
-    return df[['timestamp', 'high', 'low', 'open', 'close', 'volume', 'symbol', 'clubid']]
+    return df[['timestamp', 'high', 'low', 'open', 'close', 'adjclose', 'volume', 'symbol', 'clubid']]
 
 # -----------------------------------------------------------------  #  
 # ---- Get stock quotes, general info, can take max 200 tickers ---- #
@@ -197,7 +198,7 @@ def getStockQuotes(tickersToGet, session):
     df = pd.DataFrame(resultData)
     df["clubid"] = df["symbol"].map(clubIdMapping)
     df["timestamp"] = int(datetime.now().timestamp())
-    return df[['symbol', 'timestamp', 'regularMarketPrice', 'marketCap', 'currency', 'exchangeTimezoneShortName', 'fullExchangeName', 'gmtOffSetMilliseconds', 'sharesOutstanding', 'beta', 'longName', 'clubid']]
+    return df[['symbol', 'shortName', 'timestamp', 'regularMarketPrice', 'marketCap', 'currency', 'financialCurrency', 'exchangeTimezoneShortName', 'exchange', 'fullExchangeName', 'gmtOffSetMilliseconds', 'sharesOutstanding', 'beta', 'bookValue', 'priceToBook', 'longName', 'clubid']]
 
 # -----------------------------------------------------------------  #  
 # ---------- Wrappers for fetch data and upload to DB -------------- #
@@ -233,6 +234,7 @@ def createTablesIfNotExists():
                     low NUMERIC(18,2),
                     open NUMERIC(18,2),
                     close NUMERIC(18,2),
+                    adjclose NUMERIC(18,2),
                     volume INTEGER,
                     symbol VARCHAR(10),
                     clubid INT,
@@ -245,14 +247,19 @@ def createTablesIfNotExists():
                 CREATE TABLE IF NOT EXISTS {schemaName}.{table} (
                     stockquoteid SERIAL PRIMARY KEY,
                     symbol VARCHAR(10),
+                    shortName TEXT,
                     clubid INT, 
                     marketcap BIGINT,
                     currency VARCHAR(10),
+                    financialCurrency VARCHAR(10),
                     exchangeTimezoneShortName VARCHAR(10),
+                    exchange VARCHAR(10),
                     fullExchangeName TEXT,
                     gmtOffSetMilliseconds INT,
                     sharesOutstanding BIGINT,
                     beta NUMERIC(18,2),
+                    bookValue NUMERIC(18,2),
+                    priceToBook NUMERIC(18,2),
                     longName TEXT,
                     regularMarketPrice NUMERIC(18,2),
                     timestamp BIGINT, 
@@ -277,7 +284,7 @@ def integrationYahooFinance():
         # fetchChartsAndUploadToDB(session, "max")
 
         # Run daily
-        fetchChartsAndUploadToDB(session, "max")
+        fetchChartsAndUploadToDB(session, "5d")
 
         # Run monthly
         currentQuoteData = run_sql_query(f"SELECT * FROM {schemaName}.stockquote;")
