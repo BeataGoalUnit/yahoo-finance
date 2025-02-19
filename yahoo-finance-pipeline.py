@@ -188,6 +188,7 @@ with models.DAG(
                     'open': quote['open'][i],
                     'close': quote['close'][i],
                     'volume': quote['volume'][i],
+                    'adjclose': quote['adjclose'][i],
                 })
 
         if not valid_data:
