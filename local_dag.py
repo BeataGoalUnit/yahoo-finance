@@ -285,7 +285,7 @@ def integrationYahooFinance():
         # fetchChartsAndUploadToDB(session, "max", "1d")
 
         # Run daily
-        fetchChartsAndUploadToDB(session, "5d", "1d")
+        # fetchChartsAndUploadToDB(session, "5d", "1d")
 
         # Run monthly
         currentQuoteData = run_sql_query(f"SELECT * FROM {schemaName}.stockquote;")
