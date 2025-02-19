@@ -14,6 +14,7 @@ YAHOO_FINANCE_API_KEY = "nyckel" # TODO!
 YAHOO_FINANCE_HOST = "yahoo-finance-real-time1.p.rapidapi.com"
 BASE_URL = "https://yahoo-finance-real-time1.p.rapidapi.com/"
 
+# Put in existing schema
 schemaName = 'financial'
 tables = ['stockchart', 'stockquote']
 tickers = ["AIK-B.ST", "MANU", "AAB.CO", "AGF-B.CO", "PARKEN.CO", "BIF.CO", "CCP.L", "BVB.DE", "AJAX.AS", "JUVE.MI", "SSL.MI", "FCP.LS", "SLBEN.LS", "SCP.LS", "FENER.IS", "GSRAY.IS", "BJKAS.IS", "TSPOR.IS"]

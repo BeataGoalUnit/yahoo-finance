@@ -11,6 +11,7 @@ YAHOO_FINANCE_API_KEY = "137f78e0f7msh62e445a737cf689p109e79jsne0788c058c05"
 YAHOO_FINANCE_HOST = "yahoo-finance-real-time1.p.rapidapi.com"
 BASE_URL = "https://yahoo-finance-real-time1.p.rapidapi.com/"
 
+# Put in existing schema
 schemaName = 'financial'
 tables = ['stockchart', 'stockquote']
 tickers = ["AIK-B.ST", "MANU", "AAB.CO", "AGF-B.CO", "PARKEN.CO", "BIF.CO", "CCP.L", "BVB.DE", "AJAX.AS", "JUVE.MI", "SSL.MI", "FCP.LS", "SLBEN.LS", "SCP.LS", "FENER.IS", "GSRAY.IS", "BJKAS.IS", "TSPOR.IS"]
@@ -209,9 +210,9 @@ def fecthQuotesAndUploadToDB(tickers, session):
         quotesMQ = generateMergeQuery(quotes, quoteTableName)
         uploadToDB(quotes, quoteTableName, quotesMQ)
 
-def fetchChartsAndUploadToDB(session, range):
+def fetchChartsAndUploadToDB(session, range, interval):
     for ticker in tickers: 
-        chart = getStockChartData(ticker, range, "1d", session)
+        chart = getStockChartData(ticker, range, interval, session)
         chartTableName = 'stockchart'
         chartsMQ = generateMergeQuery(chart, chartTableName)
         uploadToDB(chart, chartTableName, chartsMQ)   
@@ -281,10 +282,10 @@ def integrationYahooFinance():
         createTablesIfNotExists()
 
         # TODO: Run to fetch all daily historical stock chart data
-        # fetchChartsAndUploadToDB(session, "max")
+        # fetchChartsAndUploadToDB(session, "max", "1d")
 
         # Run daily
-        fetchChartsAndUploadToDB(session, "5d")
+        fetchChartsAndUploadToDB(session, "5d", "1d")
 
         # Run monthly
         currentQuoteData = run_sql_query(f"SELECT * FROM {schemaName}.stockquote;")
