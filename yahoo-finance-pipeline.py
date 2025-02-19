@@ -65,7 +65,7 @@ with models.DAG(
                 return
 
             is_prod = False # <- TODO: hur sätts den? False nu men True sen i prod?
-            postgres.merge_to_postgres(df, merge_query, len(df.columns), is_prod=is_prod)
+            postgres.merge_to_postgres(df, merge_query, is_prod=is_prod)
             print("{} Loaded Yahoo Finance data to {}".format(datetime.now(), table_name))
             
     # -----------------------------------------------------------------  #             
@@ -177,23 +177,24 @@ with models.DAG(
             print(f"No valid quote data for {ticker}.")
             return None
 
-        # default to last ingex, iterate backward through 'close' values to find the first valid index
-        validIndex = len(timestamps) - 1
-        for i in range(validIndex, -1, -1):
-            if quote['close'][i] is not None:
-                validIndex = i
-                break
-            
-        data = [{
-            'timestamp': timestamps[validIndex],
-            'high': quote['high'][validIndex],
-            'low': quote['low'][validIndex],
-            'open': quote['open'][validIndex],
-            'close': quote['close'][validIndex],
-            'volume': quote['volume'][validIndex],
-        }]
+        # Iterate through all the timestamps and filter out invalid data
+        valid_data = []
+        for i in range(len(timestamps)):
+            if quote['close'][i] is not None:  # Only include data where 'close' value is valid
+                valid_data.append({
+                    'timestamp': timestamps[i],
+                    'high': quote['high'][i],
+                    'low': quote['low'][i],
+                    'open': quote['open'][i],
+                    'close': quote['close'][i],
+                    'volume': quote['volume'][i],
+                })
 
-        df = pd.DataFrame(data)
+        if not valid_data:
+            print(f"No valid data found for {ticker}.")
+            return None
+
+        df = pd.DataFrame(valid_data)
         df["symbol"] = ticker
         df["clubid"] = clubIdMapping.get(ticker, None)
         return df[['timestamp', 'high', 'low', 'open', 'close', 'volume', 'symbol', 'clubid']]
@@ -230,13 +231,11 @@ with models.DAG(
             uploadToDB(quotes, quoteTableName, quotesMQ)
 
     def fetchChartsAndUploadToDB(session, range):
-            charts = pd.DataFrame()
             for ticker in tickers: 
                 chart = getStockChartData(ticker, range, "1d", session)
-                charts = pd.concat([chart, charts], ignore_index=True)
                 chartTableName = 'stockchart'
-                chartsMQ = generateMergeQuery(charts, chartTableName)
-                uploadToDB(charts, chartTableName, chartsMQ)   
+                chartsMQ = generateMergeQuery(chart, chartTableName)
+                uploadToDB(chart, chartTableName, chartsMQ)   
 
     # -----------------------------------------------------------------  #  
     # --- Checks if schema and / or tables exists - else creates ------- #
@@ -295,7 +294,8 @@ with models.DAG(
             createSchemaIfNotExists()
             createTablesIfNotExists()
 
-            # TODO: Om table empty - hämta längre range - ny metod  / "köra migrering" en gång? - daglig data sen 2014 = tungt?
+            # TODO: Run to fetch all daily historical stock chart data
+            # fetchChartsAndUploadToDB(session, "max")
 
             # Run daily
             fetchChartsAndUploadToDB(session, "5d")

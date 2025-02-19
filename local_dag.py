@@ -13,11 +13,27 @@ BASE_URL = "https://yahoo-finance-real-time1.p.rapidapi.com/"
 
 schemaName = 'financial'
 tables = ['stockchart', 'stockquote']
-tickers = ["AIK-B.ST", "MANU"]
+tickers = ["AIK-B.ST", "MANU", "AAB.CO", "AGF-B.CO", "PARKEN.CO", "BIF.CO", "CCP.L", "BVB.DE", "AJAX.AS", "JUVE.MI", "SSL.MI", "FCP.LS", "SLBEN.LS", "SCP.LS", "FENER.IS", "GSRAY.IS", "BJKAS.IS", "TSPOR.IS"]
 
 clubIdMapping = {
     "AIK-B.ST": 9185,
-    "MANU": 2188 
+    "MANU": 2188, 
+    "AAB.CO": 31088, 
+    "AGF-B.CO": 31974, 
+    "PARKEN.CO": 31402, 
+    "BIF.CO": 31169, 
+    "CCP.L": 671, 
+    "BVB.DE": 31914, 
+    "AJAX.AS": 15623, 
+    "JUVE.MI": 21376, 
+    "SSL.MI": 21439, 
+    "FCP.LS": 13421, 
+    "SLBEN.LS": 13031, 
+    "SCP.LS": 13547, 
+    "FENER.IS": 8082, 
+    "GSRAY.IS": 8094, 
+    "BJKAS.IS": 7951, 
+    "TSPOR.IS": 8444
 }
 
 # -----------------------------------------------------------------  #             
@@ -27,7 +43,7 @@ def uploadToDB(df: pd.DataFrame, tableName: str, mergeQuery: str):
     if df.empty:
         print(f"{datetime.now()}: Response recieved for {tableName} was empty. Skipping upload...")
         return
-    merge_to_postgres(df, mergeQuery, len(df.columns))
+    merge_to_postgres(df, mergeQuery)
     print("{} Loaded Yahoo Finance data to {}".format(datetime.now(), tableName))
     
 # -----------------------------------------------------------------  #             
@@ -139,27 +155,27 @@ def getStockChartData(ticker, withinRange, interval, session):
         print(f"No valid quote data for {ticker}.")
         return None
 
-    # default to last ingex, iterate backward through 'close' values to find the first valid index
-    validIndex = len(timestamps) - 1
-    for i in range(validIndex, -1, -1):
-        if quote['close'][i] is not None:
-            validIndex = i
-            break
-        
-    data = [{
-        'timestamp': timestamps[validIndex],
-        'high': quote['high'][validIndex],
-        'low': quote['low'][validIndex],
-        'open': quote['open'][validIndex],
-        'close': quote['close'][validIndex],
-        'volume': quote['volume'][validIndex],
-    }]
+    # Iterate through all the timestamps and filter out invalid data
+    valid_data = []
+    for i in range(len(timestamps)):
+        if quote['close'][i] is not None:  # Only include data where 'close' value is valid
+            valid_data.append({
+                'timestamp': timestamps[i],
+                'high': quote['high'][i],
+                'low': quote['low'][i],
+                'open': quote['open'][i],
+                'close': quote['close'][i],
+                'volume': quote['volume'][i],
+            })
 
-    df = pd.DataFrame(data)
+    if not valid_data:
+        print(f"No valid data found for {ticker}.")
+        return None
+
+    df = pd.DataFrame(valid_data)
     df["symbol"] = ticker
     df["clubid"] = clubIdMapping.get(ticker, None)
     return df[['timestamp', 'high', 'low', 'open', 'close', 'volume', 'symbol', 'clubid']]
-
 
 # -----------------------------------------------------------------  #  
 # ---- Get stock quotes, general info, can take max 200 tickers ---- #
@@ -192,13 +208,12 @@ def fecthQuotesAndUploadToDB(tickers, session):
         uploadToDB(quotes, quoteTableName, quotesMQ)
 
 def fetchChartsAndUploadToDB(session, range):
-        charts = pd.DataFrame()
-        for ticker in tickers: 
-            chart = getStockChartData(ticker, range, "1d", session)
-            charts = pd.concat([chart, charts], ignore_index=True)
-            chartTableName = 'stockchart'
-            chartsMQ = generateMergeQuery(charts, chartTableName)
-            uploadToDB(charts, chartTableName, chartsMQ)   
+    for ticker in tickers: 
+        chart = getStockChartData(ticker, range, "1d", session)
+        chartTableName = 'stockchart'
+        chartsMQ = generateMergeQuery(chart, chartTableName)
+        uploadToDB(chart, chartTableName, chartsMQ)   
+
 
 # -----------------------------------------------------------------  #  
 # --- Checks if schema and / or tables exists - else creates ------- #
@@ -257,10 +272,11 @@ def integrationYahooFinance():
         createSchemaIfNotExists()
         createTablesIfNotExists()
 
-        # TODO: Om table empty - hämta längre range, ny metod  / "köra migrering" en gång?
-        
+        # TODO: Run to fetch all daily historical stock chart data
+        # fetchChartsAndUploadToDB(session, "max")
+
         # Run daily
-        fetchChartsAndUploadToDB(session, "5d")
+        fetchChartsAndUploadToDB(session, "max")
 
         # Run monthly
         currentQuoteData = run_sql_query(f"SELECT * FROM {schemaName}.stockquote;")
