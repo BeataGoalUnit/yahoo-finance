@@ -13,6 +13,7 @@ import time
 YAHOO_FINANCE_API_KEY = "cbb9ea0430msh6efe1cb28bb8201p19401fjsn7a8d4adfc565"
 YAHOO_FINANCE_HOST = "yahoo-finance-real-time1.p.rapidapi.com"
 BASE_URL = "https://yahoo-finance-real-time1.p.rapidapi.com/"
+IS_PROD = False # Default to False
 
 # Put in existing schema
 schemaName = 'financial'
@@ -50,299 +51,343 @@ default_args = {
     'catchup': False,
 }
 
-# Define the DAG
-with models.DAG(
-    dag_id='yahoo-finance-pipeline',
-    description='Fetches data from yahoo finance real time. Then ... ', 
-    schedule='@daily',
-    start_date= datetime(2024, 2, 1),
-    catchup=False,
-    tags=["yahoo-finance"],
-) as dag:
-    # If the DataFrame is empty, skips the upload.
-    def uploadToDB(df: pd.DataFrame, table_name: str, merge_query: str):
-            if df.empty:
-                print(f"{datetime.now()}: Response recieved for {table_name} was empty. Skipping upload...")
-                return
+# If the DataFrame is empty, skips the upload.
+def uploadToDB(df: pd.DataFrame, table_name: str, merge_query: str):
+        if df.empty:
+            print(f"{datetime.now()}: Response recieved for {table_name} was empty. Skipping upload...")
+            return
 
-            is_prod = False # <- TODO: hur sätts den? False nu men True sen i prod?
-            postgres.merge_to_postgres(df, merge_query, is_prod=is_prod)
-            print("{} Loaded Yahoo Finance data to {}".format(datetime.now(), table_name))
-            
-    # -----------------------------------------------------------------  #             
-    # Makes an API request and handles errors with retries if necessary. #
-    # -----------------------------------------------------------------  #  
-    def Request(url: str, session, attempt: int = 0):
-        response = session.get(url)
-
-        # ---------------------- #
-        # Request error handling #
-        # ---------------------- #
-        if(response.status_code == 200):
-            res = response.json()
-            return pd.DataFrame(res)
+        postgres.merge_to_postgres(df, merge_query, is_prod=IS_PROD)
+        print("{} Loaded Yahoo Finance data to {}".format(datetime.now(), table_name))
         
-        attemptCount = attempt + 1
+# -----------------------------------------------------------------  #             
+# Makes an API request and handles errors with retries if necessary. #
+# -----------------------------------------------------------------  #  
+def Request(url: str, session, attempt: int = 0):
+    response = session.get(url)
 
-        # Endpoint does not exist
-        if(response.status_code == 400 or response.status_code == 404):
-            print(f"{response.status_code} {response.reason}. Skipping.")
-
-            return None
-
-        # If "Too Many Requests" error, pause for 1 second and then try again. Limit: 5 requests/second
-        if(response.status_code == 429): 
-            print("429: Too many requests, retrying...")
-            time.sleep(1)
-
-            return Request(url=url, session=session)
-        
-        # If "Internal Server Error", pause for an hour and then try again.
-        if(response.status_code == 500):
-            # Om vi gjort 10 försök -> avbryt
-            if(attemptCount >= 10):
-                print("10 attempts were made, moving on with the next request.")
-                attemptCount = 0
-                return None
-
-            print(f"500: Internal Server Error, attempt: [{attemptCount}], pausing for 10 minutes and then retrying...")
-            time.sleep(600)
-
-            return Request(url=url, session=session, attempt=attemptCount)
-        
-        # If "Service Unavailable 503" error, pause for 2 minutes and then try again.
-        if(response.status_code == 503):
-            # Om vi gjort 10 försök -> avbryt
-            if(attemptCount >= 10):
-                print("Aborting")
-                sys.exit(1)
-
-            print(f"503: Service unavailable, attempt: [{attemptCount}], retrying...")
-            time.sleep(120)
-
-            return Request(url=url, session=session, attempt=attemptCount)
-        
-        # If "Gateway Time-out" error, pause for 30 seconds and then try again (internet access issues).
-        if(response.status_code == 504): 
-            print(f"504: Gateway time-out, attempt: [{attemptCount}], retrying...")
-            time.sleep(30)
-
-            return Request(url=url, attempt=attemptCount)
-        
-        print(f"When calling {url}: An unexpected error occured: {response.status_code} {response.reason}. More info: {response.text}")
-        return None
+    # ---------------------- #
+    # Request error handling #
+    # ---------------------- #
+    if(response.status_code == 200):
+        res = response.json()
+        return pd.DataFrame(res)
     
-    # -----------------------------------------------------------------  #  
-    # ------------------- Generates a merge query ---------------------  #  
-    # -----------------------------------------------------------------  #  
-    def generateMergeQuery(df: pd.DataFrame, tableName: str):
-        columns = df.columns.tolist()
-        valuePlaceholders = ", ".join(["%s"] * len(columns))
-        columnsToInsert = ", ".join(columns)
+    attemptCount = attempt + 1
+
+    # Endpoint does not exist
+    if(response.status_code == 400 or response.status_code == 404):
+        print(f"{response.status_code} {response.reason}. Skipping.")
+
+        return None
+
+    # If "Too Many Requests" error, pause for 1 second and then try again. Limit: 5 requests/second
+    if(response.status_code == 429): 
+        print("429: Too many requests, retrying...")
+        time.sleep(1)
+
+        return Request(url=url, session=session)
+    
+    # If "Internal Server Error", pause for an hour and then try again.
+    if(response.status_code == 500):
+        # Om vi gjort 10 försök -> avbryt
+        if(attemptCount >= 10):
+            print("10 attempts were made, moving on with the next request.")
+            attemptCount = 0
+            return None
+
+        print(f"500: Internal Server Error, attempt: [{attemptCount}], pausing for 10 minutes and then retrying...")
+        time.sleep(600)
+
+        return Request(url=url, session=session, attempt=attemptCount)
+    
+    # If "Service Unavailable 503" error, pause for 2 minutes and then try again.
+    if(response.status_code == 503):
+        # Om vi gjort 10 försök -> avbryt
+        if(attemptCount >= 10):
+            print("Aborting")
+            sys.exit(1)
+
+        print(f"503: Service unavailable, attempt: [{attemptCount}], retrying...")
+        time.sleep(120)
+
+        return Request(url=url, session=session, attempt=attemptCount)
+    
+    # If "Gateway Time-out" error, pause for 30 seconds and then try again (internet access issues).
+    if(response.status_code == 504): 
+        print(f"504: Gateway time-out, attempt: [{attemptCount}], retrying...")
+        time.sleep(30)
+
+        return Request(url=url, attempt=attemptCount)
+    
+    print(f"When calling {url}: An unexpected error occured: {response.status_code} {response.reason}. More info: {response.text}")
+    return None
+
+# -----------------------------------------------------------------  #  
+# ------------------- Generates a merge query ---------------------  #  
+# -----------------------------------------------------------------  #  
+def generateMergeQuery(df: pd.DataFrame, tableName: str):
+    columns = df.columns.tolist()
+    valuePlaceholders = ", ".join(["%s"] * len(columns))
+    columnsToInsert = ", ".join(columns)
+    
+    if tableName == 'stockchart':
+        conflictColumns = ['symbol', 'timestamp']
+        conflictTarget = ", ".join(conflictColumns)
         
-        if tableName == 'stockchart':
-            conflictColumns = ['symbol', 'timestamp']
-            conflictTarget = ", ".join(conflictColumns)
-            
-            mergeQuery = f"""
-            INSERT INTO {schemaName}.{tableName} ({columnsToInsert})
-            VALUES ({valuePlaceholders})
-            ON CONFLICT ({conflictTarget}) 
-            DO NOTHING;
-            """
-        elif tableName == 'stockquote':
-            mergeQuery = f"""
-            INSERT INTO {schemaName}.{tableName} ({columnsToInsert})
-            VALUES ({valuePlaceholders});
-            """
-        else:
-            raise ValueError(f"Unknown table: {tableName}")
-        return mergeQuery
+        mergeQuery = f"""
+        INSERT INTO {schemaName}.{tableName} ({columnsToInsert})
+        VALUES ({valuePlaceholders})
+        ON CONFLICT ({conflictTarget}) 
+        DO NOTHING;
+        """
+    elif tableName == 'stockquote':
+        mergeQuery = f"""
+        INSERT INTO {schemaName}.{tableName} ({columnsToInsert})
+        VALUES ({valuePlaceholders});
+        """
+    else:
+        raise ValueError(f"Unknown table: {tableName}")
+    return mergeQuery
 
-    # -----------------------------------------------------------------  #  
-    # --- Get stock data for chosen ticker within range and interval --- #
-    # -----------------------------------------------------------------  #  
-    def getStockChartData(ticker, withinRange, interval, session):
-        url = f"{BASE_URL}/stock/get-chart?symbol={ticker}&lang=en-US&useYfid=true&includeAdjustedClose=true&events=div%2Csplit%2Cearn&range={withinRange}&interval={interval}"
-        res = Request(url, session=session)
+# -----------------------------------------------------------------  #  
+# --- Get stock data for chosen ticker within range and interval --- #
+# -----------------------------------------------------------------  #  
+def getStockChartData(ticker, withinRange, interval, session):
+    url = f"{BASE_URL}/stock/get-chart?symbol={ticker}&lang=en-US&useYfid=true&includeAdjustedClose=true&events=div%2Csplit%2Cearn&range={withinRange}&interval={interval}"
+    res = Request(url, session=session)
 
-        if res is None or res.empty or 'chart' not in res or 'result' not in res['chart']:
-            print(f"No valid data found for {ticker}.")
-            return None
+    if res is None or res.empty or 'chart' not in res or 'result' not in res['chart']:
+        print(f"No valid data found for {ticker}.")
+        return None
 
-        chartData = res['chart']['result'][0]
-        timestamps = chartData.get('timestamp', [])
-        quote = chartData.get('indicators', {}).get('quote', [])[0]
-        adjclose = chartData.get('indicators', {}).get('adjclose', [])[0]
+    chartData = res['chart']['result'][0]
+    timestamps = chartData.get('timestamp', [])
+    quote = chartData.get('indicators', {}).get('quote', [])[0]
+    adjclose = chartData.get('indicators', {}).get('adjclose', [])[0]
 
-        if not timestamps or not quote:
-            print(f"No valid quote data for {ticker}.")
-            return None
+    if not timestamps or not quote:
+        print(f"No valid quote data for {ticker}.")
+        return None
 
-        # Iterate through all the timestamps and filter out invalid data
-        valid_data = []
-        for i in range(len(timestamps)):
-            if quote['close'][i] is not None:  # Only include data where 'close' value is valid
-                valid_data.append({
-                    'timestamp': timestamps[i],
-                    'high': quote['high'][i],
-                    'low': quote['low'][i],
-                    'open': quote['open'][i],
-                    'close': quote['close'][i],
-                    'adjclose': adjclose['adjclose'][i],
-                    'volume': quote['volume'][i],
-                })
-
-        if not valid_data:
-            print(f"No valid data found for {ticker}.")
-            return None
-
-        df = pd.DataFrame(valid_data)
-        df["symbol"] = ticker
-        df["clubid"] = clubIdMapping.get(ticker, None)
-        return df[['timestamp', 'high', 'low', 'open', 'close', 'adjclose', 'volume', 'symbol', 'clubid']]
-
-
-    # -----------------------------------------------------------------  #  
-    # ---- Get stock quotes, general info, can take max 200 tickers ---- #
-    # -----------------------------------------------------------------  #  
-    def getStockQuotes(tickersToGet, session):
-        tickerQuery = "%2C".join(tickersToGet)
-        url = f"{BASE_URL}/market/get-quotes?region=US&symbols={tickerQuery}"
-        res = Request(url, session=session)
-
-        if res is None or res.empty or 'quoteResponse' not in res or 'result' not in res.get('quoteResponse', {}):
-            print("Monthly stock quotes could not be found.")
-            return None
-        resultData = res['quoteResponse']['result']
-        if not resultData:
-            print("No result data found for monthly quotes.")
-            return None
-        
-        df = pd.DataFrame(resultData)
-        df["clubid"] = df["symbol"].map(clubIdMapping)
-        df["timestamp"] = int(datetime.now().timestamp())
-        return df[['symbol', 'shortName', 'timestamp', 'regularMarketPrice', 'marketCap', 'currency', 'financialCurrency', 'exchangeTimezoneShortName', 'exchange', 'fullExchangeName', 'gmtOffSetMilliseconds', 'sharesOutstanding', 'beta', 'bookValue', 'priceToBook', 'longName', 'clubid']]
-
-    # -----------------------------------------------------------------  #  
-    # ---------- Wrappers for fetch data and upload to DB -------------- #
-    # -----------------------------------------------------------------  #  
-    def fecthQuotesAndUploadToDB(tickers, session):
-            quotes = getStockQuotes(tickers, session)
-            quoteTableName = 'stockquote'
-            quotesMQ = generateMergeQuery(quotes, quoteTableName)
-            uploadToDB(quotes, quoteTableName, quotesMQ)
-
-    def fetchChartsAndUploadToDB(session, range, interval):
-            for ticker in tickers: 
-                chart = getStockChartData(ticker, range, interval, session)
-                chartTableName = 'stockchart'
-                chartsMQ = generateMergeQuery(chart, chartTableName)
-                uploadToDB(chart, chartTableName, chartsMQ)   
-
-    # -----------------------------------------------------------------  #  
-    # --- Checks if schema and / or tables exists - else creates ------- #
-    # -----------------------------------------------------------------  #  
-    def createSchemaIfNotExists():
-        postgres.run_sql_query(f"CREATE SCHEMA IF NOT EXISTS {schemaName};", commit_changes=True)
-
-    def createTablesIfNotExists():
-        for table in tables:
-            if table == 'stockchart':
-                postgres.run_sql_query(f"""
-                    CREATE TABLE IF NOT EXISTS {schemaName}.{table} (
-                        stockchartid SERIAL PRIMARY KEY,
-                        timestamp BIGINT,
-                        high NUMERIC(18,2),
-                        low NUMERIC(18,2),
-                        open NUMERIC(18,2),
-                        close NUMERIC(18,2),
-                        adjclose NUMERIC(18,2),
-                        volume INTEGER,
-                        symbol VARCHAR(10),
-                        clubid INT,
-                        CONSTRAINT uc_timestamp_symbol UNIQUE (symbol, timestamp),
-                        CONSTRAINT fk_club_stockquote FOREIGN KEY (clubid) REFERENCES club.club(clubid)
-                    );
-                """, commit_changes=True)
-            if table == 'stockquote':
-                postgres.run_sql_query(f"""
-                    CREATE TABLE IF NOT EXISTS {schemaName}.{table} (
-                        stockquoteid SERIAL PRIMARY KEY,
-                        symbol VARCHAR(10),
-                        shortName TEXT,
-                        clubid INT, 
-                        marketcap BIGINT,
-                        currency VARCHAR(10),
-                        financialCurrency VARCHAR(10),
-                        exchangeTimezoneShortName VARCHAR(10),
-                        exchange VARCHAR(10),
-                        fullExchangeName TEXT,
-                        gmtOffSetMilliseconds INT,
-                        sharesOutstanding BIGINT,
-                        beta NUMERIC(18,2),
-                        bookValue NUMERIC(18,2),
-                        priceToBook NUMERIC(18,2),
-                        longName TEXT,
-                        regularMarketPrice NUMERIC(18,2),
-                        timestamp BIGINT, 
-                        CONSTRAINT fk_club_stockchart FOREIGN KEY (clubid) REFERENCES club.club(clubid)
-                    );
-                """, commit_changes=True)
-
-    # -----------------------------------------------------------------  #  
-    # ---------------- Main function - called in pipeline -------------- #
-    # -----------------------------------------------------------------  #  
-    def integrationYahooFinance(): 
-        with Session() as session:
-            session.headers.update({
-                "x-rapidapi-key": YAHOO_FINANCE_API_KEY,
-                "x-rapidapi-host": YAHOO_FINANCE_HOST
+    # Iterate through all the timestamps and filter out invalid data
+    valid_data = []
+    for i in range(len(timestamps)):
+        if quote['close'][i] is not None:  # Only include data where 'close' value is valid
+            valid_data.append({
+                'timestamp': timestamps[i],
+                'high': quote['high'][i],
+                'low': quote['low'][i],
+                'open': quote['open'][i],
+                'close': quote['close'][i],
+                'adjclose': adjclose['adjclose'][i],
+                'volume': quote['volume'][i],
             })
 
-            createSchemaIfNotExists()
-            createTablesIfNotExists()
+    if not valid_data:
+        print(f"No valid data found for {ticker}.")
+        return None
 
-            # TODO: Om hämta all historisk daglig data, ändra range argument (mitten) till "max"
+    df = pd.DataFrame(valid_data)
+    df["symbol"] = ticker
+    df["clubid"] = clubIdMapping.get(ticker, None)
+    return df[['timestamp', 'high', 'low', 'open', 'close', 'adjclose', 'volume', 'symbol', 'clubid']]
 
-            # Run daily
-            fetchChartsAndUploadToDB(session, "5d", "1d")
 
-            # Run monthly
-            currentQuoteData = postgres.run_sql_query(f"SELECT * FROM {schemaName}.stockquote;")
-            if currentQuoteData.empty:
-                print("No data in stockquote, fetching...")
+# -----------------------------------------------------------------  #  
+# ---- Get stock quotes, general info, can take max 200 tickers ---- #
+# -----------------------------------------------------------------  #  
+def getStockQuotes(tickersToGet, session):
+    tickerQuery = "%2C".join(tickersToGet)
+    url = f"{BASE_URL}/market/get-quotes?region=US&symbols={tickerQuery}"
+    res = Request(url, session=session)
+
+    if res is None or res.empty or 'quoteResponse' not in res or 'result' not in res.get('quoteResponse', {}):
+        print("Monthly stock quotes could not be found.")
+        return None
+    resultData = res['quoteResponse']['result']
+    if not resultData:
+        print("No result data found for monthly quotes.")
+        return None
+    
+    df = pd.DataFrame(resultData)
+    df["clubid"] = df["symbol"].map(clubIdMapping)
+    df["timestamp"] = int(datetime.now().timestamp())
+    return df[['symbol', 'shortName', 'timestamp', 'regularMarketPrice', 'marketCap', 'currency', 'financialCurrency', 'exchangeTimezoneShortName', 'exchange', 'fullExchangeName', 'gmtOffSetMilliseconds', 'sharesOutstanding', 'beta', 'bookValue', 'priceToBook', 'longName', 'clubid']]
+
+# -----------------------------------------------------------------  #  
+# ---------- Wrappers for fetch data and upload to DB -------------- #
+# -----------------------------------------------------------------  #  
+def fecthQuotesAndUploadToDB(tickers, session):
+        quotes = getStockQuotes(tickers, session)
+        if quotes is None or quotes.empty:
+            print("No stock quotes retrieved. Skipping upload...")
+            return
+          
+        quoteTableName = 'stockquote'
+        quotesMQ = generateMergeQuery(quotes, quoteTableName)
+        uploadToDB(quotes, quoteTableName, quotesMQ)
+
+def fetchChartsAndUploadToDB(session, range, interval):
+        for ticker in tickers: 
+            chart = getStockChartData(ticker, range, interval, session)
+            if chart is None or chart.empty:
+                print(f"No chart data retrieved for {ticker}. Skipping upload...")
+                continue
+              
+            chartTableName = 'stockchart'
+            chartsMQ = generateMergeQuery(chart, chartTableName)
+            uploadToDB(chart, chartTableName, chartsMQ)   
+
+# -----------------------------------------------------------------  #  
+# --- Checks if schema and / or tables exists - else creates ------- #
+# -----------------------------------------------------------------  #  
+def createSchemaIfNotExists():
+    postgres.run_sql_query(f"CREATE SCHEMA IF NOT EXISTS {schemaName};", commit_changes=True, is_prod=IS_PROD)
+
+def createTablesIfNotExists():
+    for table in tables:
+        if table == 'stockchart':
+            postgres.run_sql_query(f"""
+                CREATE TABLE IF NOT EXISTS {schemaName}.{table} (
+                    stockchartid SERIAL PRIMARY KEY,
+                    timestamp BIGINT,
+                    high NUMERIC(18,2),
+                    low NUMERIC(18,2),
+                    open NUMERIC(18,2),
+                    close NUMERIC(18,2),
+                    adjclose NUMERIC(18,2),
+                    volume INTEGER,
+                    symbol VARCHAR(10),
+                    clubid INT,
+                    CONSTRAINT uc_timestamp_symbol UNIQUE (symbol, timestamp),
+                    CONSTRAINT fk_club_stockquote FOREIGN KEY (clubid) REFERENCES club.club(clubid)
+                );
+            """, commit_changes=True, is_prod=IS_PROD)
+        if table == 'stockquote':
+            postgres.run_sql_query(f"""
+                CREATE TABLE IF NOT EXISTS {schemaName}.{table} (
+                    stockquoteid SERIAL PRIMARY KEY,
+                    symbol VARCHAR(10),
+                    shortName TEXT,
+                    clubid INT, 
+                    marketcap BIGINT,
+                    currency VARCHAR(10),
+                    financialCurrency VARCHAR(10),
+                    exchangeTimezoneShortName VARCHAR(10),
+                    exchange VARCHAR(10),
+                    fullExchangeName TEXT,
+                    gmtOffSetMilliseconds INT,
+                    sharesOutstanding BIGINT,
+                    beta NUMERIC(18,2),
+                    bookValue NUMERIC(18,2),
+                    priceToBook NUMERIC(18,2),
+                    longName TEXT,
+                    regularMarketPrice NUMERIC(18,2),
+                    timestamp BIGINT, 
+                    CONSTRAINT fk_club_stockchart FOREIGN KEY (clubid) REFERENCES club.club(clubid)
+                );
+            """, commit_changes=True, is_prod=IS_PROD)
+
+# -----------------------------------------------------------------  #  
+# ---------------- Main function - called in pipeline -------------- #
+# -----------------------------------------------------------------  #  
+def integrationYahooFinance(is_prod: bool, **kwargs): 
+    with Session() as session:
+        session.headers.update({
+            "x-rapidapi-key": YAHOO_FINANCE_API_KEY,
+            "x-rapidapi-host": YAHOO_FINANCE_HOST
+        })
+        global IS_PROD
+        IS_PROD = is_prod
+        createSchemaIfNotExists()
+        createTablesIfNotExists()
+
+        # TODO: Om hämta all historisk daglig data, ändra range argument (mitten) till "max" eller "10y"
+
+        # Run daily
+        fetchChartsAndUploadToDB(session, "5d", "1d")
+
+        # Run monthly
+        currentQuoteData = postgres.run_sql_query(f"SELECT * FROM {schemaName}.stockquote;", commit_changes=False, is_prod=IS_PROD)
+        if currentQuoteData.empty:
+            print("No data in stockquote, fetching...")
+            fecthQuotesAndUploadToDB(tickers, session)
+        else:
+            currentQuoteData['timestamp'] = pd.to_datetime(currentQuoteData['timestamp'], unit="s")
+            latestTimestamp = currentQuoteData["timestamp"].max()
+            oneMonthAgo = datetime.now() - timedelta(days=30)
+            if latestTimestamp < oneMonthAgo:
+                print("stockquote data older than a month, fetching...")
                 fecthQuotesAndUploadToDB(tickers, session)
             else:
-                currentQuoteData['timestamp'] = pd.to_datetime(currentQuoteData['timestamp'], unit="s")
-                latestTimestamp = currentQuoteData["timestamp"].max()
-                oneMonthAgo = datetime.now() - timedelta(days=30)
-                if latestTimestamp < oneMonthAgo:
-                    print("stockquote data older than a month, fetching...")
-                    fecthQuotesAndUploadToDB(tickers, session)
-                else:
-                    print("stockquote data is fetched within this month...")
+                print("stockquote data is fetched within this month...")
 
-    # -----------------------------------------------------------------  #  
-    # -------------------------- Pipeline -----------------------------  #
-    # -----------------------------------------------------------------  #  
-    Start = BashOperator(
-        task_id="START_PIPELINE",
-        bash_command='echo "START PIPELINE"; sleep 15',
-        dag=dag,
+
+# ---------------------------------------------
+# DEV DAG (Non-Production)
+# ---------------------------------------------
+with models.DAG(
+    dag_id="yahoo-finance-pipeline-dev",
+    description="Yahoo Finance DAG for Development",
+    schedule='@daily',
+    start_date=datetime(2024, 2, 1),
+    catchup=False,
+    tags=["yahoo-finance", "dev"],
+) as dag_dev:
+
+    Start_dev = BashOperator(
+        task_id="START_PIPELINE_DEV",
+        bash_command='echo "START PIPELINE (DEV)"; sleep 15',
+        dag=dag_dev,
     )
-        
-    YahooFinance = PythonOperator(
-        task_id='YAHOO_FINANCE_GENERAL',
+
+    YahooFinance_dev = PythonOperator(
+        task_id='YAHOO_FINANCE_GENERAL_DEV',
         python_callable=integrationYahooFinance,
-        dag=dag
+        op_kwargs={'is_prod': False},  # Dev mode
+        dag=dag_dev
     )
 
-    End = BashOperator(
-        task_id="END_PIPELINE",
-        bash_command='echo "PIPELINE ENDED"; sleep 15',
-        dag=dag,
+    End_dev = BashOperator(
+        task_id="END_PIPELINE_DEV",
+        bash_command='echo "PIPELINE ENDED (DEV)"; sleep 15',
+        dag=dag_dev,
         trigger_rule="all_done"
     )
 
-    Start >> YahooFinance >> End
+    Start_dev >> YahooFinance_dev >> End_dev
+
+# ---------------------------------------------
+# PROD DAG (Production)
+# ---------------------------------------------
+with models.DAG(
+    dag_id="yahoo-finance-pipeline-prod",
+    description="Yahoo Finance DAG for Production",
+    schedule='@daily',
+    start_date=datetime(2024, 2, 1),
+    catchup=False,
+    tags=["yahoo-finance", "prod"],
+) as dag_prod:
+
+    Start_prod = BashOperator(
+        task_id="START_PIPELINE_PROD",
+        bash_command='echo "START PIPELINE (PROD)"; sleep 15',
+        dag=dag_prod,
+    )
+
+    YahooFinance_prod = PythonOperator(
+        task_id='YAHOO_FINANCE_GENERAL_PROD',
+        python_callable=integrationYahooFinance,
+        op_kwargs={'is_prod': True},  # Prod mode
+        dag=dag_prod
+    )
+
+    End_prod = BashOperator(
+        task_id="END_PIPELINE_PROD",
+        bash_command='echo "PIPELINE ENDED (PROD)"; sleep 15',
+        dag=dag_prod,
+        trigger_rule="all_done"
+    )
+
+    Start_prod >> YahooFinance_prod >> End_prod
