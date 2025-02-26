@@ -13,30 +13,17 @@ BASE_URL = "https://yahoo-finance-real-time1.p.rapidapi.com/"
 
 # Put in existing schema
 schemaName = 'financial'
-tables = ['stockchart', 'stockquote']
+tables = ['exchangechart', 'indexchart']
 
-tickers = ["AIK-B.ST", "MANU", "AAB.CO", "AGF-B.CO", "PARKEN.CO", "BIF.CO", "CCP.L", "BVB.DE", "AJAX.AS", "JUVE.MI", "SSL.MI", "FCP.LS", "SLBEN.LS", "SCP.LS", "FENER.IS", "GSRAY.IS", "BJKAS.IS", "TSPOR.IS"]
-
-clubDataMapping = {
-    "AIK-B.ST": {"clubid": 9185, "indexSymbol": "^OMX"},
-    "MANU": {"clubid": 2188, "indexSymbol": "^DJUS"},
-    "AAB.CO": {"clubid": 31088, "indexSymbol": "^OMXC20"},
-    "AGF-B.CO": {"clubid": 31974, "indexSymbol": "^OMXC20"},
-    "PARKEN.CO": {"clubid": 31402, "indexSymbol": "^OMXC20"},
-    "BIF.CO": {"clubid": 31169, "indexSymbol": "^OMXC20"},
-    "CCP.L": {"clubid": 671, "indexSymbol": "^FTSE"},
-    "BVB.DE": {"clubid": 31914, "indexSymbol": "^GDAXI"},
-    "AJAX.AS": {"clubid": 15623, "indexSymbol": "^NLDOW"},
-    "JUVE.MI": {"clubid": 21376, "indexSymbol": "^ITDOW"},
-    "SSL.MI": {"clubid": 21439, "indexSymbol": "^ITDOW"},
-    "FCP.LS": {"clubid": 13421, "indexSymbol": "PSI20.LS"},
-    "SLBEN.LS": {"clubid": 13031, "indexSymbol": "PSI20.LS"},
-    "SCP.LS": {"clubid": 13547, "indexSymbol": "PSI20.LS"},
-    "FENER.IS": {"clubid": 8082, "indexSymbol": "XU100.IS"},
-    "GSRAY.IS": {"clubid": 8094, "indexSymbol": "XU100.IS"},
-    "BJKAS.IS": {"clubid": 7951, "indexSymbol": "XU100.IS"},
-    "TSPOR.IS": {"clubid": 8444, "indexSymbol": "XU100.IS"},
-}
+indexes = ["^OMX", "^OMXC20", "^DJUS", "^FTSE", "^GDAXI", "^NLDOW", "^ITDOW", "PSI20.LS", "XU100.IS"]
+currencies = [
+    "SEK",
+    "DKK",
+    "USD",
+    "GBP",
+    "EUR",
+    "TRY",
+]
 
 # -----------------------------------------------------------------  #             
 # ------------------ Upload to DB ---------------------------------- #
@@ -70,7 +57,6 @@ def Request(url: str, session, attempt: int = 0):
         return None
 
     # If "Too Many Requests" error, pause for 1 second and then try again. Limit: 5 requests/second
-    # TODO: ADD A COUNTER HERE!!!! if monthly limit is reached
     if(response.status_code == 429): 
         print("429: Too many requests, retrying...")
         time.sleep(1)
@@ -120,7 +106,17 @@ def generateMergeQuery(df: pd.DataFrame, tableName: str):
     valuePlaceholders = ", ".join(["%s"] * len(columns))
     columnsToInsert = ", ".join(columns)
     
-    if tableName == 'stockchart':
+    if tableName == 'exchangechart':
+        conflictColumns = ['fromcurrency', 'tocurrency', 'dateutc']
+        conflictTarget = ", ".join(conflictColumns)
+        
+        mergeQuery = f"""
+        INSERT INTO {schemaName}.{tableName} ({columnsToInsert})
+        VALUES ({valuePlaceholders})
+        ON CONFLICT ({conflictTarget}) 
+        DO NOTHING;
+        """
+    elif tableName == 'indexchart':
         conflictColumns = ['symbol', 'timestamp']
         conflictTarget = ", ".join(conflictColumns)
         
@@ -130,11 +126,6 @@ def generateMergeQuery(df: pd.DataFrame, tableName: str):
         ON CONFLICT ({conflictTarget}) 
         DO NOTHING;
         """
-    elif tableName == 'stockquote':
-        mergeQuery = f"""
-        INSERT INTO {schemaName}.{tableName} ({columnsToInsert})
-        VALUES ({valuePlaceholders});
-        """
     else:
         raise ValueError(f"Unknown table: {tableName}")
     return mergeQuery
@@ -142,21 +133,56 @@ def generateMergeQuery(df: pd.DataFrame, tableName: str):
 # -----------------------------------------------------------------  #  
 # --- Get stock data for chosen ticker within range and interval --- #
 # -----------------------------------------------------------------  #  
-def getStockChartData(ticker, withinRange, interval, session):
-    url = f"{BASE_URL}/stock/get-chart?symbol={ticker}&lang=en-US&useYfid=true&includeAdjustedClose=true&events=div%2Csplit%2Cearn&range={withinRange}&interval={interval}"
+def getExchangeToEurData(currency, withinRange, interval, session):
+    url = f"{BASE_URL}/stock/get-chart?symbol={currency}EUR%3DX&range={withinRange}&interval={interval}"
     res = Request(url, session=session)
 
     if res is None or res.empty or 'chart' not in res or 'result' not in res['chart']:
-        print(f"No valid data found for {ticker}.")
+        print(f"No valid data found for {currency}.")
         return None
 
     chartData = res['chart']['result'][0]
     timestamps = chartData.get('timestamp', [])
     quote = chartData.get('indicators', {}).get('quote', [])[0]
-    adjclose = chartData.get('indicators', {}).get('adjclose', [])[0]
 
     if not timestamps or not quote:
-        print(f"No valid quote data for {ticker}.")
+        print(f"No valid data for {currency}.")
+        return None
+
+    # Iterate through all the timestamps and filter out invalid data
+    valid_data = []
+    for i in range(len(timestamps)):
+        if quote['close'][i] is not None:
+            valid_data.append({
+                'timestamp': timestamps[i],
+                'rate': quote['close'][i],
+            })
+
+    if not valid_data:
+        print(f"No valid data found for {currency}.")
+        return None
+
+    df = pd.DataFrame(valid_data)
+    df["fromcurrency"] = currency
+    df["tocurrency"] = "EUR"
+    df["dateutc"] = pd.to_datetime(df["timestamp"], unit='s', utc=True).dt.date
+    return df[['rate', 'dateutc', 'fromcurrency', 'tocurrency']]
+
+def getIndexChartData(index, withinRange, interval, session):
+    url = f"{BASE_URL}/stock/get-chart?symbol={index}&includeAdjustedClose=true&range={withinRange}&interval={interval}"
+    res = Request(url, session=session)
+
+    if res is None or res.empty or 'chart' not in res or 'result' not in res['chart']:
+        print(f"No valid data found for {index}.")
+        return None
+
+    indexData = res['chart']['result'][0]
+    timestamps = indexData.get('timestamp', [])
+    quote = indexData.get('indicators', {}).get('quote', [])[0]
+    adjclose = indexData.get('indicators', {}).get('adjclose', [])[0]
+
+    if not timestamps or not quote:
+        print(f"No valid quote data for {index}.")
         return None
 
     # Iterate through all the timestamps and filter out invalid data
@@ -174,53 +200,28 @@ def getStockChartData(ticker, withinRange, interval, session):
             })
 
     if not valid_data:
-        print(f"No valid data found for {ticker}.")
+        print(f"No valid data found for {index}.")
         return None
 
     df = pd.DataFrame(valid_data)
-    df["symbol"] = ticker
-    df["clubid"] = df["symbol"].map(lambda ticker: clubDataMapping.get(ticker, {}).get("clubid", None))
+    df["symbol"] = index
     df["dateutc"] = pd.to_datetime(df["timestamp"], unit='s', utc=True).dt.date
-    return df[['timestamp', 'high', 'low', 'open', 'close', 'adjclose', 'volume', 'dateutc', 'symbol', 'clubid']]
-
-# -----------------------------------------------------------------  #  
-# ---- Get stock quotes, general info, can take max 200 tickers ---- #
-# -----------------------------------------------------------------  #  
-def getClubStockQuotes(session):
-    tickerQuery = "%2C".join(tickers)
-    url = f"{BASE_URL}/market/get-quotes?region=US&symbols={tickerQuery}"
-    res = Request(url, session=session)
-
-    if res is None or res.empty or 'quoteResponse' not in res or 'result' not in res.get('quoteResponse', {}):
-        print("Monthly stock quotes could not be found.")
-        return None
-    resultData = res['quoteResponse']['result']
-    if not resultData:
-        print("No result data found for monthly quotes.")
-        return None
-    
-    df = pd.DataFrame(resultData)
-    df["clubid"] = df["symbol"].map(lambda ticker: clubDataMapping.get(ticker, {}).get("clubid", None))
-    df["compareIndex"] = df["symbol"].map(lambda ticker: clubDataMapping.get(ticker, {}).get("indexSymbol", None))
-
-    df["timestamp"] = int(datetime.now().timestamp())
-    df["dateutc"] = pd.to_datetime(df["timestamp"], unit='s', utc=True).dt.date
-
-    return df[['symbol', 'shortName', 'timestamp', 'regularMarketPrice', 'marketCap', 'currency', 'financialCurrency', 'exchangeTimezoneShortName', 'exchange', 'fullExchangeName', 'gmtOffSetMilliseconds', 'sharesOutstanding', 'beta', 'bookValue', 'priceToBook', 'longName', 'clubid', 'dateutc', 'compareIndex' ]]
+    return df[['timestamp', 'high', 'low', 'open', 'close', 'adjclose', 'volume', 'dateutc', 'symbol' ]]
 
 # -----------------------------------------------------------------  #  
 # ---------- Wrappers for fetch data and upload to DB -------------- #
 # -----------------------------------------------------------------  #  
-def fecthQuotesAndUploadToDB(session):
-        quotes = getClubStockQuotes(session)
-        quoteTableName = 'stockquote'
-        quotesMQ = generateMergeQuery(quotes, quoteTableName)
-        uploadToDB(quotes, quoteTableName, quotesMQ)
+def fetchExchangeChartsAndUploadToDB(session, range, interval):
+    for currency in currencies: 
+        chart = getExchangeToEurData(currency, range, interval, session)
+        chartTableName = 'exchangechart'
+        chartsMQ = generateMergeQuery(chart, chartTableName)
+        uploadToDB(chart, chartTableName, chartsMQ)   
 
-def fetchChartsAndUploadToDB(session, range, interval):
-    for ticker in tickers: 
-        chart = getStockChartData(ticker, range, interval, session)
-        chartTableName = 'stockchart'
+def fetchIndexChartsAndUploadToDB(session, range, interval):
+    for index in indexes:
+        chart = getIndexChartData(index, range, interval, session)
+        chartTableName = 'indexchart'
         chartsMQ = generateMergeQuery(chart, chartTableName)
         uploadToDB(chart, chartTableName, chartsMQ)   
 
@@ -233,11 +234,24 @@ def createSchemaIfNotExists():
 
 def createTablesIfNotExists():
     for table in tables:
-        if table == 'stockchart':
+        if table == 'exchangechart':
             run_sql_query(f"""
                 CREATE TABLE IF NOT EXISTS {schemaName}.{table} (
-                    stockchartid SERIAL PRIMARY KEY,
+                    exchangechartid SERIAL PRIMARY KEY,
+                    rate NUMERIC(18,2),
+                    fromcurrency VARCHAR(10),
+                    tocurrency VARCHAR(10),
+                    dateutc DATE,
+                    CONSTRAINT uc_dateutc_currency UNIQUE (fromcurrency, tocurrency, dateutc)
+                );
+            """, commit_changes=True)
+        if table == 'indexchart':
+            run_sql_query(f"""
+                CREATE TABLE IF NOT EXISTS {schemaName}.{table} (
+                    indexchartid SERIAL PRIMARY KEY,
                     timestamp BIGINT,
+                    currency VARCHAR(10),
+                    shortName TEXT,
                     high NUMERIC(18,2),
                     low NUMERIC(18,2),
                     open NUMERIC(18,2),
@@ -245,36 +259,8 @@ def createTablesIfNotExists():
                     adjclose NUMERIC(18,2),
                     volume INTEGER,
                     symbol VARCHAR(10),
-                    clubid INT,
                     dateutc DATE,
-                    CONSTRAINT uc_timestamp_symbol UNIQUE (symbol, timestamp),
-                    CONSTRAINT fk_club_stockquote FOREIGN KEY (clubid) REFERENCES club.club(clubid)
-                );
-            """, commit_changes=True)
-        if table == 'stockquote':
-            run_sql_query(f"""
-                CREATE TABLE IF NOT EXISTS {schemaName}.{table} (
-                    stockquoteid SERIAL PRIMARY KEY,
-                    symbol VARCHAR(10),
-                    shortName TEXT,
-                    clubid INT, 
-                    marketcap BIGINT,
-                    currency VARCHAR(10),
-                    financialCurrency VARCHAR(10),
-                    exchangeTimezoneShortName VARCHAR(10),
-                    exchange VARCHAR(10),
-                    fullExchangeName TEXT,
-                    gmtOffSetMilliseconds INT,
-                    sharesOutstanding BIGINT,
-                    beta NUMERIC(18,2),
-                    bookValue NUMERIC(18,2),
-                    priceToBook NUMERIC(18,2),
-                    longName TEXT,
-                    regularMarketPrice NUMERIC(18,2),
-                    timestamp BIGINT, 
-                    dateutc DATE,
-                    compareindex VARCHAR(10),
-                    CONSTRAINT fk_club_stockchart FOREIGN KEY (clubid) REFERENCES club.club(clubid)
+                    CONSTRAINT uc_symbol_timestamp UNIQUE (symbol, timestamp)
                 );
             """, commit_changes=True)
     
@@ -291,25 +277,9 @@ def integrationYahooFinance():
         createSchemaIfNotExists()
         createTablesIfNotExists()
 
-        # TODO: Run to fetch all daily historical stock chart data
+        # TODO: Change middle argument (range) to "10y" for initial load
         # fetchChartsAndUploadToDB(session, "10y", "1d")
-
-        # Run daily
-        fetchChartsAndUploadToDB(session, "5d", "1d")
-
-        # Run monthly
-        currentQuoteData = run_sql_query(f"SELECT * FROM {schemaName}.stockquote;")
-        if currentQuoteData.empty:
-            print("No data in stockquote, fetching...")
-            fecthQuotesAndUploadToDB(session)
-        else:
-            currentQuoteData['timestamp'] = pd.to_datetime(currentQuoteData['timestamp'], unit="s")
-            latestTimestamp = currentQuoteData["timestamp"].max()
-            oneMonthAgo = datetime.now() - timedelta(days=30)
-            if latestTimestamp < oneMonthAgo:
-                print("stockquote data older than a month, fetching...")
-                fecthQuotesAndUploadToDB(session)
-            else:
-                print("stockquote data is fetched within this month...")
+        # fetchIndexChartsAndUploadToDB(session, "5d", "1d")
+        # fetchExchangeChartsAndUploadToDB(session, "5d", "1d")
 
 integrationYahooFinance()

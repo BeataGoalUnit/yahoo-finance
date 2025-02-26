@@ -1,20 +1,20 @@
-Club,Ticker,Country
-AIK,AIK-B.ST,Sweden
-Aalborg,AAB.CO,Denmark
-AGF Aarhus,AGF-B.CO,Denmark
-FC Copenhagen,PARKEN.CO,Denmark
-Bröndby,BIF.CO,Denmark
-Manchester United,MANU,England
-Celtic,CCP.L,Scotland
-Borussia Dortmund,BVB.DE,Germany
-Ajax,AJAX.AS,Netherlands
-Juventus,JUVE.MI,Italy
-AS Roma,ASR?,Italy
-Lazio,SSL.MI,Italy
-Porto,FCP.LS,Portugal
-Benfica,SLBEN.LS,Portugal
-Sporting Lissabon,SCP.LS,Portugal
-Fenerbahce,FENER.IS,Turkey
-Galatasaray,GSRAY.IS,Turkey
-Besiktas,BJKAS.IS,Turkey
-Trabzonspor,TSPOR.IS,Turkey
+Club,Ticker,Country,Currency,Index
+AIK,AIK-B.ST,Sweden,SEK,^OMX
+Aalborg,AAB.CO,Denmark,DKK,^OMXC20
+AGF Aarhus,AGF-B.CO,Denmark,DKK,^OMXC20
+FC Copenhagen,PARKEN.CO,Denmark,DKK,^OMXC20
+Bröndby,BIF.CO,Denmark,DKK,^OMXC20
+Manchester United,MANU,England,USD,^DJUS
+Celtic,CCP.L,Scotland,GBP,^FTSE
+Borussia Dortmund,BVB.DE,Germany,EUR,^GDAXI
+Ajax,AJAX.AS,Netherlands,EUR,^NLDOW
+Juventus,JUVE.MI,Italy,EUR,^ITDOW
+AS Roma,ASR?,Italy,
+Lazio,SSL.MI,Italy,EUR,^ITDOW
+Porto,FCP.LS,Portugal,EUR,PSI20.LS
+Benfica,SLBEN.LS,Portugal,EUR,PSI20.LS
+Sporting Lissabon,SCP.LS,Portugal,EUR,PSI20.LS
+Fenerbahce,FENER.IS,Turkey,TRY,XU100.IS
+Galatasaray,GSRAY.IS,Turkey,TRY,XU100.IS
+Besiktas,BJKAS.IS,Turkey,TRY,XU100.IS
+Trabzonspor,TSPOR.IS,Turkey,TRY,XU100.IS
