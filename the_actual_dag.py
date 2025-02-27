@@ -17,9 +17,9 @@ IS_PROD = False # Default to False
 
 # Put in existing schema
 schemaName = 'financial'
-tables = ['stockchart', 'stockquote']
+tables = ['stockchart', 'stockquote', 'indexchart']
 tickers = ["AIK-B.ST", "MANU", "AAB.CO", "AGF-B.CO", "PARKEN.CO", "BIF.CO", "CCP.L", "BVB.DE", "AJAX.AS", "JUVE.MI", "SSL.MI", "FCP.LS", "SLBEN.LS", "SCP.LS", "FENER.IS", "GSRAY.IS", "BJKAS.IS", "TSPOR.IS"]
-
+indexes = ["^OMX", "^OMXC25", "^DJUS", "^FTSE", "^GDAXI", "^AEX", "FTSEMIB.MI", "PSI20.LS", "XU100.IS"]
 clubIdMapping = {
     "AIK-B.ST": 9185,
     "MANU": 2188, 
@@ -131,7 +131,7 @@ def generateMergeQuery(df: pd.DataFrame, tableName: str):
     valuePlaceholders = ", ".join(["%s"] * len(columns))
     columnsToInsert = ", ".join(columns)
     
-    if tableName == 'stockchart':
+    if tableName in ['stockchart', 'indexchart']:
         conflictColumns = ['symbol', 'timestamp']
         conflictTarget = ", ".join(conflictColumns)
         
@@ -216,6 +216,49 @@ def getStockQuotes(tickersToGet, session):
     return df[['symbol', 'shortName', 'timestamp', 'regularMarketPrice', 'marketCap', 'currency', 'financialCurrency', 'exchangeTimezoneShortName', 'exchange', 'fullExchangeName', 'gmtOffSetMilliseconds', 'sharesOutstanding', 'beta', 'bookValue', 'priceToBook', 'longName', 'clubid']]
 
 # -----------------------------------------------------------------  #  
+# --- Get index data for chosen ticker within range and interval --- #
+# -----------------------------------------------------------------  # 
+def getIndexChartData(index, withinRange, interval, session):
+    url = f"{BASE_URL}/stock/get-chart?symbol={index}&range={withinRange}&interval={interval}"
+    res = Request(url, session=session)
+
+    if res is None or res.empty or 'chart' not in res or 'result' not in res['chart']:
+        print(f"No valid data found for {index}.")
+        return None
+
+    indexData = res['chart']['result'][0]
+    timestamps = indexData.get('timestamp', [])
+    meta = indexData.get('meta', {})
+    quote = indexData.get('indicators', {}).get('quote', [])[0]
+
+    if not timestamps or not quote:
+        print(f"No valid quote data for {index}.")
+        return None
+
+    # Iterate through all the timestamps and filter out invalid data
+    valid_data = []
+    for i in range(len(timestamps)):
+        if quote['close'][i] is not None:  # Only include data where 'close' value is valid
+            valid_data.append({
+                'timestamp': timestamps[i],
+                'high': quote['high'][i],
+                'low': quote['low'][i],
+                'open': quote['open'][i],
+                'close': quote['close'][i],
+            })
+
+    if not valid_data:
+        print(f"No valid data found for {index}.")
+        return None
+
+    df = pd.DataFrame(valid_data)
+    df["symbol"] = index
+    df["dateutc"] = pd.to_datetime(df["timestamp"], unit='s', utc=True).dt.date
+    df["shortname"] = meta.get('shortName')
+    df["currency"] = meta.get('currency')
+    return df[['timestamp', 'shortname', 'currency', 'high', 'low', 'open', 'close', 'dateutc', 'symbol']]
+
+# -----------------------------------------------------------------  #  
 # ---------- Wrappers for fetch data and upload to DB -------------- #
 # -----------------------------------------------------------------  #  
 def fecthQuotesAndUploadToDB(tickers, session):
@@ -238,6 +281,17 @@ def fetchChartsAndUploadToDB(session, range, interval):
             chartTableName = 'stockchart'
             chartsMQ = generateMergeQuery(chart, chartTableName)
             uploadToDB(chart, chartTableName, chartsMQ)   
+
+def fetchIndexChartsAndUploadToDB(session, range, interval):
+      for index in indexes:
+          chart = getIndexChartData(index, range, interval, session)
+          if chart is None or chart.empty:
+                print(f"No chart data retrieved for {index}. Skipping upload...")
+                continue
+            
+          chartTableName = 'indexchart'
+          chartsMQ = generateMergeQuery(chart, chartTableName)
+          uploadToDB(chart, chartTableName, chartsMQ)   
 
 # -----------------------------------------------------------------  #  
 # --- Checks if schema and / or tables exists - else creates ------- #
@@ -288,6 +342,22 @@ def createTablesIfNotExists():
                     CONSTRAINT fk_club_stockchart FOREIGN KEY (clubid) REFERENCES club.club(clubid)
                 );
             """, commit_changes=True, is_prod=IS_PROD)
+        if table == 'indexchart':
+            postgres.run_sql_query(f"""
+                CREATE TABLE IF NOT EXISTS {schemaName}.{table} (
+                    indexchartid SERIAL PRIMARY KEY,
+                    timestamp BIGINT,
+                    currency VARCHAR(10),
+                    shortName TEXT,
+                    high NUMERIC(18,2),
+                    low NUMERIC(18,2),
+                    open NUMERIC(18,2),
+                    close NUMERIC(18,2),
+                    symbol VARCHAR(10),
+                    dateutc DATE,
+                    CONSTRAINT uc_symbol_timestamp UNIQUE (symbol, timestamp)
+                );
+            """, commit_changes=True, is_prod=IS_PROD)
 
 # -----------------------------------------------------------------  #  
 # ---------------- Main function - called in pipeline -------------- #
@@ -303,10 +373,12 @@ def integrationYahooFinance(is_prod: bool, **kwargs):
         createSchemaIfNotExists()
         createTablesIfNotExists()
 
-        # TODO: Om hämta all historisk daglig data, ändra range argument (mitten) till "max" eller "10y"
-
+        # TODO: Om hämta historisk daglig data, sätt withinRange till "10y"
+        withinRange = "5d"
+      
         # Run daily
-        fetchChartsAndUploadToDB(session, "5d", "1d")
+        fetchChartsAndUploadToDB(session, withinRange, "1d")
+        fetchIndexChartsAndUploadToDB(session, withinRange, "1d")
 
         # Run monthly
         currentQuoteData = postgres.run_sql_query(f"SELECT * FROM {schemaName}.stockquote;", commit_changes=False, is_prod=IS_PROD)

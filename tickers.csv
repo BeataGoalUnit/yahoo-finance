@@ -7,10 +7,10 @@ Bröndby,BIF.CO,Denmark,DKK,^OMXC20
 Manchester United,MANU,England,USD,^DJUS
 Celtic,CCP.L,Scotland,GBP,^FTSE
 Borussia Dortmund,BVB.DE,Germany,EUR,^GDAXI
-Ajax,AJAX.AS,Netherlands,EUR,^NLDOW
-Juventus,JUVE.MI,Italy,EUR,^ITDOW
+Ajax,AJAX.AS,Netherlands,EUR,^AEX
+Juventus,JUVE.MI,Italy,EUR,FTSEMIB.MI
 AS Roma,ASR?,Italy,
-Lazio,SSL.MI,Italy,EUR,^ITDOW
+Lazio,SSL.MI,Italy,EUR,FTSEMIB.MI
 Porto,FCP.LS,Portugal,EUR,PSI20.LS
 Benfica,SLBEN.LS,Portugal,EUR,PSI20.LS
 Sporting Lissabon,SCP.LS,Portugal,EUR,PSI20.LS

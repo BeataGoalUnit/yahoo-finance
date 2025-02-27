@@ -7,7 +7,7 @@ import sys
 import time
 from datetime import datetime, timedelta
 
-YAHOO_FINANCE_API_KEY = "137f78e0f7msh62e445a737cf689p109e79jsne0788c058c05" 
+YAHOO_FINANCE_API_KEY = "cbb9ea0430msh6efe1cb28bb8201p19401fjsn7a8d4adfc565" 
 YAHOO_FINANCE_HOST = "yahoo-finance-real-time1.p.rapidapi.com"
 BASE_URL = "https://yahoo-finance-real-time1.p.rapidapi.com/"
 
@@ -15,7 +15,7 @@ BASE_URL = "https://yahoo-finance-real-time1.p.rapidapi.com/"
 schemaName = 'financial'
 tables = ['exchangechart', 'indexchart']
 
-indexes = ["^OMX", "^OMXC20", "^DJUS", "^FTSE", "^GDAXI", "^NLDOW", "^ITDOW", "PSI20.LS", "XU100.IS"]
+indexes = ["^OMX", "^OMXC25", "^DJUS", "^FTSE", "^GDAXI", "^AEX", "FTSEMIB.MI", "PSI20.LS", "XU100.IS"]
 currencies = [
     "SEK",
     "DKK",
@@ -168,8 +168,11 @@ def getExchangeToEurData(currency, withinRange, interval, session):
     df["dateutc"] = pd.to_datetime(df["timestamp"], unit='s', utc=True).dt.date
     return df[['rate', 'dateutc', 'fromcurrency', 'tocurrency']]
 
+# -----------------------------------------------------------------  #  
+# --- Get index data for chosen ticker within range and interval --- #
+# -----------------------------------------------------------------  # 
 def getIndexChartData(index, withinRange, interval, session):
-    url = f"{BASE_URL}/stock/get-chart?symbol={index}&includeAdjustedClose=true&range={withinRange}&interval={interval}"
+    url = f"{BASE_URL}/stock/get-chart?symbol={index}&range={withinRange}&interval={interval}"
     res = Request(url, session=session)
 
     if res is None or res.empty or 'chart' not in res or 'result' not in res['chart']:
@@ -178,8 +181,8 @@ def getIndexChartData(index, withinRange, interval, session):
 
     indexData = res['chart']['result'][0]
     timestamps = indexData.get('timestamp', [])
+    meta = indexData.get('meta', {})
     quote = indexData.get('indicators', {}).get('quote', [])[0]
-    adjclose = indexData.get('indicators', {}).get('adjclose', [])[0]
 
     if not timestamps or not quote:
         print(f"No valid quote data for {index}.")
@@ -195,8 +198,6 @@ def getIndexChartData(index, withinRange, interval, session):
                 'low': quote['low'][i],
                 'open': quote['open'][i],
                 'close': quote['close'][i],
-                'adjclose': adjclose['adjclose'][i],
-                'volume': quote['volume'][i],
             })
 
     if not valid_data:
@@ -206,7 +207,9 @@ def getIndexChartData(index, withinRange, interval, session):
     df = pd.DataFrame(valid_data)
     df["symbol"] = index
     df["dateutc"] = pd.to_datetime(df["timestamp"], unit='s', utc=True).dt.date
-    return df[['timestamp', 'high', 'low', 'open', 'close', 'adjclose', 'volume', 'dateutc', 'symbol' ]]
+    df["shortname"] = meta.get('shortName')
+    df["currency"] = meta.get('currency')
+    return df[['timestamp', 'shortname', 'currency', 'high', 'low', 'open', 'close', 'dateutc', 'symbol']]
 
 # -----------------------------------------------------------------  #  
 # ---------- Wrappers for fetch data and upload to DB -------------- #
@@ -256,8 +259,6 @@ def createTablesIfNotExists():
                     low NUMERIC(18,2),
                     open NUMERIC(18,2),
                     close NUMERIC(18,2),
-                    adjclose NUMERIC(18,2),
-                    volume INTEGER,
                     symbol VARCHAR(10),
                     dateutc DATE,
                     CONSTRAINT uc_symbol_timestamp UNIQUE (symbol, timestamp)
@@ -279,7 +280,8 @@ def integrationYahooFinance():
 
         # TODO: Change middle argument (range) to "10y" for initial load
         # fetchChartsAndUploadToDB(session, "10y", "1d")
-        # fetchIndexChartsAndUploadToDB(session, "5d", "1d")
-        # fetchExchangeChartsAndUploadToDB(session, "5d", "1d")
+        withinRange = "5d"
+        fetchIndexChartsAndUploadToDB(session, withinRange, "1d")
+        fetchExchangeChartsAndUploadToDB(session, "5d", "1d")
 
 integrationYahooFinance()
