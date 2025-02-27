@@ -7,7 +7,7 @@ import sys
 import time
 from datetime import datetime, timedelta
 
-YAHOO_FINANCE_API_KEY = "cbb9ea0430msh6efe1cb28bb8201p19401fjsn7a8d4adfc565" 
+YAHOO_FINANCE_API_KEY = "137f78e0f7msh62e445a737cf689p109e79jsne0788c058c05" 
 YAHOO_FINANCE_HOST = "yahoo-finance-real-time1.p.rapidapi.com"
 BASE_URL = "https://yahoo-finance-real-time1.p.rapidapi.com/"
 
@@ -58,10 +58,15 @@ def Request(url: str, session, attempt: int = 0):
 
     # If "Too Many Requests" error, pause for 1 second and then try again. Limit: 5 requests/second
     if(response.status_code == 429): 
-        print("429: Too many requests, retrying...")
+        # Om vi gjort 5 försök -> avbryt
+        if(attemptCount >= 2):
+            print("10 attempts were made, moving on with the next request.")
+            attemptCount = 0
+            return None
+        # Retry if issue is too many requests per sec
+        print(f"429: Too many requests, attempt: [{attemptCount}] retrying...")
         time.sleep(1)
-
-        return Request(url=url, session=session)
+        return Request(url=url, session=session, attempt=attemptCount)
     
     # If "Internal Server Error", pause for an hour and then try again.
     if(response.status_code == 500):
@@ -217,6 +222,9 @@ def getIndexChartData(index, withinRange, interval, session):
 def fetchExchangeChartsAndUploadToDB(session, range, interval):
     for currency in currencies: 
         chart = getExchangeToEurData(currency, range, interval, session)
+        if chart is None or chart.empty:
+            print(f"No chart data retrieved for exchange. Skipping upload...")
+            continue
         chartTableName = 'exchangechart'
         chartsMQ = generateMergeQuery(chart, chartTableName)
         uploadToDB(chart, chartTableName, chartsMQ)   
@@ -224,6 +232,9 @@ def fetchExchangeChartsAndUploadToDB(session, range, interval):
 def fetchIndexChartsAndUploadToDB(session, range, interval):
     for index in indexes:
         chart = getIndexChartData(index, range, interval, session)
+        if chart is None or chart.empty:
+            print(f"No chart data retrieved for {index}. Skipping upload...")
+            continue
         chartTableName = 'indexchart'
         chartsMQ = generateMergeQuery(chart, chartTableName)
         uploadToDB(chart, chartTableName, chartsMQ)   

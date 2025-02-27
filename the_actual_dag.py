@@ -83,10 +83,15 @@ def Request(url: str, session, attempt: int = 0):
 
     # If "Too Many Requests" error, pause for 1 second and then try again. Limit: 5 requests/second
     if(response.status_code == 429): 
-        print("429: Too many requests, retrying...")
+        # Om vi gjort 2 försök -> avbryt
+        if(attemptCount >= 2):
+            print("2 attempts were made, moving on with the next request.")
+            attemptCount = 0
+            return None
+        # Retry if issue is too many requests per sec
+        print(f"429: Too many requests, attempt: [{attemptCount}] retrying...")
         time.sleep(1)
-
-        return Request(url=url, session=session)
+        return Request(url=url, session=session, attempt=attemptCount)
     
     # If "Internal Server Error", pause for an hour and then try again.
     if(response.status_code == 500):
