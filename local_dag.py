@@ -396,12 +396,20 @@ def getExchangeRatesToEurData(currency, withinRange, interval, session):
 # -----------------------------------------------------------------  #  
 def fetchStockAndUploadToDB(session):
         stockData = getStockData(session)
+        if stockData is None or stockData.empty:
+            print('No stock data retrieved. Skipping upload...')
+            return
+        
         stockTableName = 'stock'
         stockMQ = generateMergeQuery(stockData, stockTableName)
         uploadToDB(stockData, stockTableName, stockMQ)
 
 def fetchStockOnUpdateAndUploadToDB(session):
         onUpdateStock = getStockDataOnUpdate(session)
+        if onUpdateStock is  None or onUpdateStock.empty:
+            print('No stockupdate data retrieved. Skipping upload...')
+            return
+        
         onUpdateStockTableName = 'stockupdate'
         onUpdateStockMQ = generateMergeQuery(onUpdateStock, onUpdateStockTableName)
         uploadToDB(onUpdateStock, onUpdateStockTableName, onUpdateStockMQ)
@@ -409,23 +417,35 @@ def fetchStockOnUpdateAndUploadToDB(session):
 def fetchDailyStockAndUploadToDB(session, range, interval):
     for ticker in tickers: 
         dailyStock = getDailyStockData(ticker, range, interval, session)
+        if dailyStock is None or dailyStock.empty:
+            print(f'No dailystock data retrieved for {ticker}. Skipping upload...')
+            return
+        
         dailyStockTableName = 'dailystock'
         dailyStockMQ = generateMergeQuery(dailyStock, dailyStockTableName)
         uploadToDB(dailyStock, dailyStockTableName, dailyStockMQ)   
 
 def fetchDailyIndexAndUploadToDB(session, range, interval):
-      for index in indexes:
-          dailyIndex = getDailyIndexData(index, range, interval, session)
-          dailyIndexTableName = 'dailyindex'
-          dailyIndexMQ = generateMergeQuery(dailyIndex, dailyIndexTableName)
-          uploadToDB(dailyIndex, dailyIndexTableName, dailyIndexMQ)  
+    for index in indexes:
+        dailyIndex = getDailyIndexData(index, range, interval, session)
+        if dailyIndex is None or dailyIndex.empty:
+            print(f'No dailyindex data retrieved for {index}. Skipping upload...')
+            return
+        
+        dailyIndexTableName = 'dailyindex'
+        dailyIndexMQ = generateMergeQuery(dailyIndex, dailyIndexTableName)
+        uploadToDB(dailyIndex, dailyIndexTableName, dailyIndexMQ)  
 
 def fetchDailyExchangeRateAndUploadToDB(session, range, interval):
     for currency in currencies: 
-        exchangeRates = getExchangeRatesToEurData(currency, range, interval, session)
+        exchangeRate = getExchangeRatesToEurData(currency, range, interval, session)
+        if exchangeRate is None or exchangeRate.empty:
+            print(f'No exchangeRate data retrieved for {currency}. Skipping upload...')
+            return
+    
         exchangeRatesTableName = 'exchangetoeur'
-        exchangeRatesMQ = generateMergeQuery(exchangeRates, exchangeRatesTableName)
-        uploadToDB(exchangeRates, exchangeRatesTableName, exchangeRatesMQ)   
+        exchangeRatesMQ = generateMergeQuery(exchangeRate, exchangeRatesTableName)
+        uploadToDB(exchangeRate, exchangeRatesTableName, exchangeRatesMQ)   
 
 # -----------------------------------------------------------------  #  
 # --- Checks if schema and / or tables exists - else creates ------- #
@@ -462,7 +482,7 @@ def createTablesIfNotExists():
                     bookValue NUMERIC(18,2),
                     timestamp BIGINT, 
                     dateutc DATE,
-                    CONSTRAINT uc_stockupdate UNIQUE (stockid, sharesOutstanding, beta, bookValue ),
+                    CONSTRAINT uc_stockupdate UNIQUE (stockid, sharesOutstanding, beta, bookValue),
                     CONSTRAINT fk_stock_stockupdate FOREIGN KEY (stockid) REFERENCES financial.stock(stockid)
                 );
             """, commit_changes=True)
